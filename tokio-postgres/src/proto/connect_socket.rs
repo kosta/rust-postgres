@@ -1,6 +1,6 @@
 use futures::{try_ready, Async, Future, Poll};
 use futures_cpupool::{CpuFuture, CpuPool};
-use lazy_static::lazy_static;
+use lazy_static::{lazy_static, __lazy_static_internal, __lazy_static_create};
 use state_machine_future::{transition, RentToOwn, StateMachineFuture};
 use std::io;
 use std::net::{SocketAddr, ToSocketAddrs};
