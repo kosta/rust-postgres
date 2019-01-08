@@ -3,7 +3,6 @@ use futures::{try_ready, Async, Future, Poll};
 use state_machine_future::{transition, RentToOwn, StateMachineFuture};
 
 use crate::error::{Error, SqlState};
-use crate::next_statement;
 use crate::proto::client::Client;
 use crate::proto::prepare::PrepareFuture;
 use crate::proto::query::QueryStream;
@@ -119,7 +118,7 @@ impl PollTypeinfo for Typeinfo {
                 client: state.client,
             }),
             None => transition!(PreparingTypeinfo {
-                future: Box::new(state.client.prepare(next_statement(), TYPEINFO_QUERY, &[])),
+                future: Box::new(state.client.prepare(state.client.next_statement(), TYPEINFO_QUERY, &[])),
                 oid: state.oid,
                 client: state.client,
             }),
@@ -137,7 +136,7 @@ impl PollTypeinfo for Typeinfo {
 
                 transition!(PreparingTypeinfoFallback {
                     future: Box::new(state.client.prepare(
-                        next_statement(),
+                        state.client.next_statement(),
                         TYPEINFO_FALLBACK_QUERY,
                         &[]
                     )),

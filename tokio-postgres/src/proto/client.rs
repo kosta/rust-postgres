@@ -58,6 +58,7 @@ struct Inner {
     #[cfg_attr(not(feature = "runtime"), allow(dead_code))]
     idx: Option<usize>,
     next_portal_id: AtomicUsize,
+    next_statement_id: AtomicUsize,
 }
 
 #[derive(Clone)]
@@ -85,6 +86,7 @@ impl Client {
             config,
             idx,
             next_portal_id: AtomicUsize::new(0),
+            next_statement_id: AtomicUsize::new(0),
         }))
     }
 
@@ -279,6 +281,10 @@ impl Client {
             sender,
             idle: None,
         });
+    }
+
+    pub fn next_statement(&self) -> String {
+        format!("s{}", self.0.next_statement_id.fetch_add(1, Ordering::Relaxed))
     }
 
     pub fn next_portal(&self) -> String {

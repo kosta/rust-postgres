@@ -87,7 +87,6 @@
 use bytes::{Bytes, IntoBuf};
 use futures::{try_ready, Async, Future, Poll, Stream};
 use std::error::Error as StdError;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio_io::{AsyncRead, AsyncWrite};
 
 pub use crate::config::*;
@@ -108,11 +107,6 @@ mod socket;
 mod stmt;
 mod tls;
 pub mod types;
-
-fn next_statement() -> String {
-    static ID: AtomicUsize = AtomicUsize::new(0);
-    format!("s{}", ID.fetch_add(1, Ordering::SeqCst))
-}
 
 /// A convenience function which parses a connection string and connects to the database.
 ///
@@ -149,7 +143,7 @@ impl Client {
     /// The list of types may be smaller than the number of parameters - the types of the remaining parameters will be
     /// inferred. For example, `client.prepare_typed(query, &[])` is equivalent to `client.prepare(query)`.
     pub fn prepare_typed(&mut self, query: &str, param_types: &[Type]) -> Prepare {
-        Prepare(self.0.prepare(next_statement(), query, param_types))
+        Prepare(self.0.prepare(self.0.next_statement(), query, param_types))
     }
 
     /// Executes a statement, returning the number of rows modified.

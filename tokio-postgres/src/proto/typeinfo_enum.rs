@@ -3,7 +3,6 @@ use futures::{try_ready, Async, Future, Poll};
 use state_machine_future::{transition, RentToOwn, StateMachineFuture};
 
 use crate::error::{Error, SqlState};
-use crate::next_statement;
 use crate::proto::client::Client;
 use crate::proto::prepare::PrepareFuture;
 use crate::proto::query::QueryStream;
@@ -65,7 +64,7 @@ impl PollTypeinfoEnum for TypeinfoEnum {
                 future: Box::new(
                     state
                         .client
-                        .prepare(next_statement(), TYPEINFO_ENUM_QUERY, &[])
+                        .prepare(state.client.next_statement(), TYPEINFO_ENUM_QUERY, &[])
                 ),
                 oid: state.oid,
                 client: state.client,
@@ -84,7 +83,7 @@ impl PollTypeinfoEnum for TypeinfoEnum {
 
                 transition!(PreparingTypeinfoEnumFallback {
                     future: Box::new(state.client.prepare(
-                        next_statement(),
+                        state.client.next_statement(),
                         TYPEINFO_ENUM_FALLBACK_QUERY,
                         &[]
                     )),

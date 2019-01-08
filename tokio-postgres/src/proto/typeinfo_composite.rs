@@ -5,7 +5,6 @@ use std::mem;
 use std::vec;
 
 use crate::error::Error;
-use crate::next_statement;
 use crate::proto::client::Client;
 use crate::proto::prepare::PrepareFuture;
 use crate::proto::query::QueryStream;
@@ -64,7 +63,7 @@ impl PollTypeinfoComposite for TypeinfoComposite {
             }),
             None => transition!(PreparingTypeinfoComposite {
                 future: Box::new(state.client.prepare(
-                    next_statement(),
+                    state.client.next_statement(),
                     TYPEINFO_COMPOSITE_QUERY,
                     &[]
                 )),
