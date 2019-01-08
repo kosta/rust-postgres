@@ -171,7 +171,7 @@ impl Client {
 
     pub fn execute(&self, statement: &Statement, params: &[&dyn ToSql]) -> ExecuteFuture {
         let pending = PendingRequest(
-            self.excecute_message(statement, params)
+            self.execute_message(statement, params)
                 .map(|m| (RequestMessages::Single(m), self.0.idle.guard())),
         );
         ExecuteFuture::new(self.clone(), pending, statement.clone())
@@ -179,7 +179,7 @@ impl Client {
 
     pub fn query(&self, statement: &Statement, params: &[&dyn ToSql]) -> QueryStream<Statement> {
         let pending = PendingRequest(
-            self.excecute_message(statement, params)
+            self.execute_message(statement, params)
                 .map(|m| (RequestMessages::Single(m), self.0.idle.guard())),
         );
         QueryStream::new(self.clone(), pending, statement.clone())
@@ -217,7 +217,7 @@ impl Client {
         S::Error: Into<Box<dyn StdError + Sync + Send>>,
     {
         let (mut sender, receiver) = mpsc::channel(1);
-        let pending = PendingRequest(self.excecute_message(statement, params).map(|buf| {
+        let pending = PendingRequest(self.execute_message(statement, params).map(|buf| {
             match sender.start_send(CopyMessage::Data(buf)) {
                 Ok(AsyncSink::Ready) => {}
                 _ => unreachable!("channel should have capacity"),
@@ -235,7 +235,7 @@ impl Client {
 
     pub fn copy_out(&self, statement: &Statement, params: &[&dyn ToSql]) -> CopyOutStream {
         let pending = PendingRequest(
-            self.excecute_message(statement, params)
+            self.execute_message(statement, params)
                 .map(|m| (RequestMessages::Single(m), self.0.idle.guard())),
         );
         CopyOutStream::new(self.clone(), pending, statement.clone())
@@ -325,7 +325,7 @@ impl Client {
         }
     }
 
-    fn excecute_message(
+    fn execute_message(
         &self,
         statement: &Statement,
         params: &[&dyn ToSql],
