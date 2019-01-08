@@ -114,11 +114,6 @@ fn next_statement() -> String {
     format!("s{}", ID.fetch_add(1, Ordering::SeqCst))
 }
 
-fn next_portal() -> String {
-    static ID: AtomicUsize = AtomicUsize::new(0);
-    format!("p{}", ID.fetch_add(1, Ordering::SeqCst))
-}
-
 /// A convenience function which parses a connection string and connects to the database.
 ///
 /// See the documentation for [`Config`] for details on the connection string format.
@@ -186,7 +181,7 @@ impl Client {
     ///
     /// Panics if the number of parameters provided does not match the number expected.
     pub fn bind(&mut self, statement: &Statement, params: &[&dyn ToSql]) -> Bind {
-        Bind(self.0.bind(&statement.0, next_portal(), params))
+        Bind(self.0.bind(&statement.0, self.0.next_portal(), params))
     }
 
     /// Continues execution of a portal, returning a stream of the resulting rows.

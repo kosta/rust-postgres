@@ -8,6 +8,7 @@ use postgres_protocol::message::frontend;
 use std::collections::HashMap;
 use std::error::Error as StdError;
 use std::sync::{Arc, Weak};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio_io::{AsyncRead, AsyncWrite};
 
 use crate::proto::bind::BindFuture;
@@ -56,6 +57,7 @@ struct Inner {
     config: Config,
     #[cfg_attr(not(feature = "runtime"), allow(dead_code))]
     idx: Option<usize>,
+    next_portal_id: AtomicUsize,
 }
 
 #[derive(Clone)]
@@ -82,6 +84,7 @@ impl Client {
             secret_key,
             config,
             idx,
+            next_portal_id: AtomicUsize::new(0),
         }))
     }
 
@@ -276,6 +279,10 @@ impl Client {
             sender,
             idle: None,
         });
+    }
+
+    pub fn next_portal(&self) -> String {
+        format!("p{}", self.0.next_portal_id.fetch_add(1, Ordering::Relaxed))
     }
 
     fn bind_message(
