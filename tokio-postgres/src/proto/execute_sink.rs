@@ -43,14 +43,14 @@ where
             })
             .map(|ok| ok.map(|_| item))
             .map_err(|e| {
-                eprintln!("ExecuteSink error: {:?}", e);
+                eprintln!("ExecuteSink.start_send error: {:?}", e);
                 Error::closed()
             })
     }
 
     fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
         self.sender.poll_complete().map_err(|e| {
-            eprintln!("ExecuteSink error: {:?}", e);
+            eprintln!("ExecuteSink.poll_complete error: {:?}", e);
             Error::closed()
         })
     }

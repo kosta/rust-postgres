@@ -144,6 +144,7 @@ impl Client {
             .map(|_| receiver)
             .map_err(|e| {
                 // TODO: Sorry for this bad hack!
+                eprintln!("Client.send: error {:?}", e);
                 if e.is_disconnected() {
                     Error::closed()
                 } else {
