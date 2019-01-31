@@ -143,7 +143,7 @@ where
                     if let Message::ErrorResponse(body) = message {
                         return Err(Error::db(body));
                     }
-                },
+                }
                 Some(ref mut sender) => {
                     match sender.start_send(message) {
                         // if the receiver's hung up we still need to page through the rest of the messages

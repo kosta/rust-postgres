@@ -1,12 +1,12 @@
 use futures::{Poll, Sink, StartSend};
 use std::marker::PhantomData;
 
-use crate::{Client, Statement};
 use crate::types::ToSql;
+use crate::{Client, Statement};
 
 pub struct ExecuteSink<T, F>
-    where
-        F: Fn(&T) -> &[&dyn ToSql]
+where
+    F: Fn(&T) -> &[&dyn ToSql],
 {
     statement: Statement,
     client: Client,
@@ -15,19 +15,17 @@ pub struct ExecuteSink<T, F>
 }
 
 impl<T, F> Sink for ExecuteSink<T, F>
-where F: Fn(&T) -> &[&dyn ToSql]
+where
+    F: Fn(&T) -> &[&dyn ToSql],
 {
     type SinkItem = T;
     type SinkError = crate::Error;
 
-    fn start_send(
-    &mut self,
-    item: Self::SinkItem
-) -> StartSend<Self::SinkItem, Self::SinkError> {
-    unimplemented!()
-}
+    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
+        unimplemented!()
+    }
 
-fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
-    unimplemented!()
-}
+    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
+        unimplemented!()
+    }
 }

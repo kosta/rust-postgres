@@ -7,8 +7,8 @@ use postgres_protocol::message::backend::Message;
 use postgres_protocol::message::frontend;
 use std::collections::HashMap;
 use std::error::Error as StdError;
-use std::sync::{Arc, Weak};
 use std::io;
+use std::sync::{Arc, Weak};
 use tokio_io::{AsyncRead, AsyncWrite};
 
 use crate::proto::bind::BindFuture;
@@ -134,7 +134,8 @@ impl Client {
         let (messages, idle) = request.0?;
         let (sender, receiver) = mpsc::channel(1);
         self.0
-            .sender.clone()
+            .sender
+            .clone()
             .try_send(Request {
                 messages,
                 sender: Some(sender),
@@ -285,11 +286,15 @@ impl Client {
         frontend::close(ty, name, &mut buf).expect("statement name not valid");
         frontend::sync(&mut buf);
         let (sender, _) = mpsc::channel(0);
-        self.0.sender.clone().try_send(Request {
-            messages: RequestMessages::Single(buf),
-            sender: Some(sender),
-            idle: None,
-        }).expect("try_send to succeed (TODO: Bad hack)");
+        self.0
+            .sender
+            .clone()
+            .try_send(Request {
+                messages: RequestMessages::Single(buf),
+                sender: Some(sender),
+                idle: None,
+            })
+            .expect("try_send to succeed (TODO: Bad hack)");
     }
 
     fn bind_message(
