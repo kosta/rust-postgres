@@ -61,7 +61,7 @@ pub use crate::proto::connect_once::ConnectOnceFuture;
 pub use crate::proto::connect_raw::ConnectRawFuture;
 #[cfg(feature = "runtime")]
 pub use crate::proto::connect_socket::ConnectSocketFuture;
-pub use crate::proto::connection::Connection;
+pub use crate::proto::connection::{Connection, Request};
 pub use crate::proto::copy_in::CopyInFuture;
 pub use crate::proto::copy_out::CopyOutStream;
 pub use crate::proto::execute::ExecuteFuture;

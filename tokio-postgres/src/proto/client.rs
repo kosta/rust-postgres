@@ -10,6 +10,7 @@ use std::error::Error as StdError;
 use std::sync::{Arc, Weak};
 use tokio_io::{AsyncRead, AsyncWrite};
 
+use crate::{Channel, IsClosed};
 use crate::proto::bind::BindFuture;
 use crate::proto::connection::{Request, RequestMessages};
 use crate::proto::copy_in::{CopyInFuture, CopyInReceiver, CopyMessage};
@@ -31,25 +32,30 @@ use crate::{MakeTlsConnect, Socket};
 
 pub struct PendingRequest(Result<(RequestMessages, IdleGuard), Error>);
 
-pub struct WeakClient(Weak<Inner>);
+pub struct WeakClient<C: Channel<Request>>(Weak<Inner<C>>);
 
-impl WeakClient {
-    pub fn upgrade(&self) -> Option<Client> {
+impl<C: Channel<Request>> WeakClient<C>
+{
+    pub fn upgrade(&self) -> Option<Client<C>> {
         self.0.upgrade().map(Client)
     }
 }
 
-struct State {
+struct State<C>
+where
+    C: Channel<Request>,
+{
     types: HashMap<Oid, Type>,
-    typeinfo_query: Option<Statement>,
-    typeinfo_enum_query: Option<Statement>,
-    typeinfo_composite_query: Option<Statement>,
+    typeinfo_query: Option<Statement<C>>,
+    typeinfo_enum_query: Option<Statement<C>>,
+    typeinfo_composite_query: Option<Statement<C>>,
 }
 
-struct Inner {
-    state: Mutex<State>,
+struct Inner<C: Channel<Request>>
+{
+    state: Mutex<State<C>>,
     idle: IdleState,
-    sender: mpsc::UnboundedSender<Request>,
+    sender: C::TX,
     process_id: i32,
     secret_key: i32,
     #[cfg_attr(not(feature = "runtime"), allow(dead_code))]
@@ -59,16 +65,17 @@ struct Inner {
 }
 
 #[derive(Clone)]
-pub struct Client(Arc<Inner>);
+pub struct Client<C: Channel<Request>>(Arc<Inner<C>>);
 
-impl Client {
+impl<C: Channel<Request>> Client<C>
+{
     pub fn new(
-        sender: mpsc::UnboundedSender<Request>,
+        sender: C::TX,
         process_id: i32,
         secret_key: i32,
         config: Config,
         idx: Option<usize>,
-    ) -> Client {
+    ) -> Client<C> {
         Client(Arc::new(Inner {
             state: Mutex::new(State {
                 types: HashMap::new(),
@@ -93,7 +100,7 @@ impl Client {
         self.0.idle.poll_idle()
     }
 
-    pub fn downgrade(&self) -> WeakClient {
+    pub fn downgrade(&self) -> WeakClient<C> {
         WeakClient(Arc::downgrade(&self.0))
     }
 
@@ -105,27 +112,27 @@ impl Client {
         self.0.state.lock().types.insert(ty.oid(), ty.clone());
     }
 
-    pub fn typeinfo_query(&self) -> Option<Statement> {
+    pub fn typeinfo_query(&self) -> Option<Statement<C>> {
         self.0.state.lock().typeinfo_query.clone()
     }
 
-    pub fn set_typeinfo_query(&self, statement: &Statement) {
+    pub fn set_typeinfo_query(&self, statement: &Statement<C>) {
         self.0.state.lock().typeinfo_query = Some(statement.clone());
     }
 
-    pub fn typeinfo_enum_query(&self) -> Option<Statement> {
+    pub fn typeinfo_enum_query(&self) -> Option<Statement<C>> {
         self.0.state.lock().typeinfo_enum_query.clone()
     }
 
-    pub fn set_typeinfo_enum_query(&self, statement: &Statement) {
+    pub fn set_typeinfo_enum_query(&self, statement: &Statement<C>) {
         self.0.state.lock().typeinfo_enum_query = Some(statement.clone());
     }
 
-    pub fn typeinfo_composite_query(&self) -> Option<Statement> {
+    pub fn typeinfo_composite_query(&self) -> Option<Statement<C>> {
         self.0.state.lock().typeinfo_composite_query.clone()
     }
 
-    pub fn set_typeinfo_composite_query(&self, statement: &Statement) {
+    pub fn set_typeinfo_composite_query(&self, statement: &Statement<C>) {
         self.0.state.lock().typeinfo_composite_query = Some(statement.clone());
     }
 
@@ -134,7 +141,8 @@ impl Client {
         let (sender, receiver) = mpsc::channel(1);
         self.0
             .sender
-            .unbounded_send(Request {
+            // TODO: Is `start_send` really the right call?
+            .start_send(Request {
                 messages,
                 sender,
                 idle: Some(idle),
@@ -172,7 +180,7 @@ impl Client {
         ExecuteFuture::new(self.clone(), pending, statement.clone())
     }
 
-    pub fn query(&self, statement: &Statement, params: &[&dyn ToSql]) -> QueryStream<Statement> {
+    pub fn query(&self, statement: &Statement, params: &[&dyn ToSql]) -> QueryStream<Statement<C>> {
         let pending = PendingRequest(
             self.excecute_message(statement, params)
                 .map(|m| (RequestMessages::Single(m), self.0.idle.guard())),
@@ -180,7 +188,7 @@ impl Client {
         QueryStream::new(self.clone(), pending, statement.clone())
     }
 
-    pub fn bind(&self, statement: &Statement, name: String, params: &[&dyn ToSql]) -> BindFuture {
+    pub fn bind(&self, statement: &Statement, name: String, params: &[&dyn ToSql]) -> BindFuture<C> {
         let mut buf = self.bind_message(statement, &name, params);
         if let Ok(ref mut buf) = buf {
             frontend::sync(buf);
@@ -277,7 +285,7 @@ impl Client {
         frontend::close(ty, name, &mut buf).expect("statement name not valid");
         frontend::sync(&mut buf);
         let (sender, _) = mpsc::channel(0);
-        let _ = self.0.sender.unbounded_send(Request {
+        let _ = self.0.sender.start_send(Request {
             messages: RequestMessages::Single(buf),
             sender,
             idle: None,

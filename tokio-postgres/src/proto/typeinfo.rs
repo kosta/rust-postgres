@@ -2,6 +2,8 @@ use futures::stream::{self, Stream};
 use futures::{try_ready, Async, Future, Poll};
 use state_machine_future::{transition, RentToOwn, StateMachineFuture};
 
+use crate::Channel;
+use crate::proto::Request;
 use crate::error::{Error, SqlState};
 use crate::next_statement;
 use crate::proto::client::Client;
@@ -29,20 +31,23 @@ WHERE t.oid = $1
 ";
 
 #[derive(StateMachineFuture)]
-pub enum Typeinfo {
+pub enum Typeinfo<C>
+where
+    C: Channel<Request>,
+{
     #[state_machine_future(start, transitions(PreparingTypeinfo, QueryingTypeinfo, Finished))]
-    Start { oid: Oid, client: Client },
+    Start { oid: Oid, client: Client<C> },
     #[state_machine_future(transitions(PreparingTypeinfoFallback, QueryingTypeinfo))]
     PreparingTypeinfo {
-        future: Box<PrepareFuture>,
+        future: Box<PrepareFuture<C>>,
         oid: Oid,
-        client: Client,
+        client: Client<C>,
     },
     #[state_machine_future(transitions(QueryingTypeinfo))]
     PreparingTypeinfoFallback {
-        future: Box<PrepareFuture>,
+        future: Box<PrepareFuture<C>>,
         oid: Oid,
-        client: Client,
+        client: Client<C>,
     },
     #[state_machine_future(transitions(
         CachingType,
@@ -53,55 +58,58 @@ pub enum Typeinfo {
         QueryingRangeSubtype
     ))]
     QueryingTypeinfo {
-        future: stream::Collect<QueryStream<Statement>>,
+        future: stream::Collect<QueryStream<Statement<C>, C>>,
         oid: Oid,
-        client: Client,
+        client: Client<C>,
     },
     #[state_machine_future(transitions(CachingType))]
     QueryingEnumVariants {
-        future: TypeinfoEnumFuture,
+        future: TypeinfoEnumFuture<C>,
         name: String,
         oid: Oid,
         schema: String,
     },
     #[state_machine_future(transitions(CachingType))]
     QueryingDomainBasetype {
-        future: Box<TypeinfoFuture>,
+        future: Box<TypeinfoFuture<C>>,
         name: String,
         oid: Oid,
         schema: String,
     },
     #[state_machine_future(transitions(CachingType))]
     QueryingArrayElem {
-        future: Box<TypeinfoFuture>,
+        future: Box<TypeinfoFuture<C>>,
         name: String,
         oid: Oid,
         schema: String,
     },
     #[state_machine_future(transitions(CachingType))]
     QueryingCompositeFields {
-        future: TypeinfoCompositeFuture,
+        future: TypeinfoCompositeFuture<C>,
         name: String,
         oid: Oid,
         schema: String,
     },
     #[state_machine_future(transitions(CachingType))]
     QueryingRangeSubtype {
-        future: Box<TypeinfoFuture>,
+        future: Box<TypeinfoFuture<C>>,
         name: String,
         oid: Oid,
         schema: String,
     },
     #[state_machine_future(transitions(Finished))]
-    CachingType { ty: Type, oid: Oid, client: Client },
+    CachingType { ty: Type, oid: Oid, client: Client<C> },
     #[state_machine_future(ready)]
-    Finished((Type, Client)),
+    Finished((Type, Client<C>)),
     #[state_machine_future(error)]
     Failed(Error),
 }
 
-impl PollTypeinfo for Typeinfo {
-    fn poll_start<'a>(state: &'a mut RentToOwn<'a, Start>) -> Poll<AfterStart, Error> {
+impl<C> PollTypeinfo<C> for Typeinfo<C>
+where
+    C: Channel<Request>,
+{
+    fn poll_start<'a>(state: &'a mut RentToOwn<'a, Start<C>>) -> Poll<AfterStart<C>, Error> {
         let state = state.take();
 
         if let Some(ty) = Type::from_oid(state.oid) {
@@ -127,8 +135,8 @@ impl PollTypeinfo for Typeinfo {
     }
 
     fn poll_preparing_typeinfo<'a>(
-        state: &'a mut RentToOwn<'a, PreparingTypeinfo>,
-    ) -> Poll<AfterPreparingTypeinfo, Error> {
+        state: &'a mut RentToOwn<'a, PreparingTypeinfo<C>>,
+    ) -> Poll<AfterPreparingTypeinfo<C>, Error> {
         let statement = match state.future.poll() {
             Ok(Async::Ready(statement)) => statement,
             Ok(Async::NotReady) => return Ok(Async::NotReady),
@@ -159,8 +167,8 @@ impl PollTypeinfo for Typeinfo {
     }
 
     fn poll_preparing_typeinfo_fallback<'a>(
-        state: &'a mut RentToOwn<'a, PreparingTypeinfoFallback>,
-    ) -> Poll<AfterPreparingTypeinfoFallback, Error> {
+        state: &'a mut RentToOwn<'a, PreparingTypeinfoFallback<C>>,
+    ) -> Poll<AfterPreparingTypeinfoFallback<C>, Error> {
         let statement = try_ready!(state.future.poll());
         let state = state.take();
 
@@ -174,8 +182,8 @@ impl PollTypeinfo for Typeinfo {
     }
 
     fn poll_querying_typeinfo<'a>(
-        state: &'a mut RentToOwn<'a, QueryingTypeinfo>,
-    ) -> Poll<AfterQueryingTypeinfo, Error> {
+        state: &'a mut RentToOwn<'a, QueryingTypeinfo<C>>,
+    ) -> Poll<AfterQueryingTypeinfo<C>, Error> {
         let rows = try_ready!(state.future.poll());
         let state = state.take();
 
@@ -256,8 +264,8 @@ impl PollTypeinfo for Typeinfo {
     }
 
     fn poll_querying_enum_variants<'a>(
-        state: &'a mut RentToOwn<'a, QueryingEnumVariants>,
-    ) -> Poll<AfterQueryingEnumVariants, Error> {
+        state: &'a mut RentToOwn<'a, QueryingEnumVariants<C>>,
+    ) -> Poll<AfterQueryingEnumVariants<C>, Error> {
         let (variants, client) = try_ready!(state.future.poll());
         let state = state.take();
 
@@ -270,8 +278,8 @@ impl PollTypeinfo for Typeinfo {
     }
 
     fn poll_querying_domain_basetype<'a>(
-        state: &'a mut RentToOwn<'a, QueryingDomainBasetype>,
-    ) -> Poll<AfterQueryingDomainBasetype, Error> {
+        state: &'a mut RentToOwn<'a, QueryingDomainBasetype<C>>,
+    ) -> Poll<AfterQueryingDomainBasetype<C>, Error> {
         let (basetype, client) = try_ready!(state.future.poll());
         let state = state.take();
 
@@ -284,8 +292,8 @@ impl PollTypeinfo for Typeinfo {
     }
 
     fn poll_querying_array_elem<'a>(
-        state: &'a mut RentToOwn<'a, QueryingArrayElem>,
-    ) -> Poll<AfterQueryingArrayElem, Error> {
+        state: &'a mut RentToOwn<'a, QueryingArrayElem<C>>,
+    ) -> Poll<AfterQueryingArrayElem<C>, Error> {
         let (elem, client) = try_ready!(state.future.poll());
         let state = state.take();
 
@@ -298,8 +306,8 @@ impl PollTypeinfo for Typeinfo {
     }
 
     fn poll_querying_composite_fields<'a>(
-        state: &'a mut RentToOwn<'a, QueryingCompositeFields>,
-    ) -> Poll<AfterQueryingCompositeFields, Error> {
+        state: &'a mut RentToOwn<'a, QueryingCompositeFields<C>>,
+    ) -> Poll<AfterQueryingCompositeFields<C>, Error> {
         let (fields, client) = try_ready!(state.future.poll());
         let state = state.take();
 
@@ -312,8 +320,8 @@ impl PollTypeinfo for Typeinfo {
     }
 
     fn poll_querying_range_subtype<'a>(
-        state: &'a mut RentToOwn<'a, QueryingRangeSubtype>,
-    ) -> Poll<AfterQueryingRangeSubtype, Error> {
+        state: &'a mut RentToOwn<'a, QueryingRangeSubtype<C>>,
+    ) -> Poll<AfterQueryingRangeSubtype<C>, Error> {
         let (subtype, client) = try_ready!(state.future.poll());
         let state = state.take();
 
@@ -326,16 +334,19 @@ impl PollTypeinfo for Typeinfo {
     }
 
     fn poll_caching_type<'a>(
-        state: &'a mut RentToOwn<'a, CachingType>,
-    ) -> Poll<AfterCachingType, Error> {
+        state: &'a mut RentToOwn<'a, CachingType<C>>,
+    ) -> Poll<AfterCachingType<C>, Error> {
         let state = state.take();
         state.client.cache_type(&state.ty);
         transition!(Finished((state.ty, state.client)))
     }
 }
 
-impl TypeinfoFuture {
-    pub fn new(oid: Oid, client: Client) -> TypeinfoFuture {
+impl<C> TypeinfoFuture<C>
+where
+    C: Channel<Request>,
+{
+    pub fn new(oid: Oid, client: Client<C>) -> TypeinfoFuture<C> {
         Typeinfo::start(oid, client)
     }
 }

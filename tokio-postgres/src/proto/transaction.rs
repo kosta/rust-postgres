@@ -3,27 +3,29 @@ use crate::proto::simple_query::SimpleQueryStream;
 use futures::{try_ready, Async, Future, Poll, Stream};
 use state_machine_future::{transition, RentToOwn, StateMachineFuture};
 
-use crate::Error;
+use crate::proto::Request;
+use crate::{Channel, Error};
 
 #[derive(StateMachineFuture)]
-pub enum Transaction<F, T, E>
+pub enum Transaction<F, T, E, C>
 where
     F: Future<Item = T, Error = E>,
     E: From<Error>,
+    C: Channel<Request>,
 {
     #[state_machine_future(start, transitions(Beginning))]
-    Start { client: Client, future: F },
+    Start { client: Client<C>, future: F },
     #[state_machine_future(transitions(Running))]
     Beginning {
-        client: Client,
-        begin: SimpleQueryStream,
+        client: Client<C>,
+        begin: SimpleQueryStream<C>,
         future: F,
     },
     #[state_machine_future(transitions(Finishing))]
-    Running { client: Client, future: F },
+    Running { client: Client<C>, future: F },
     #[state_machine_future(transitions(Finished))]
     Finishing {
-        future: SimpleQueryStream,
+        future: SimpleQueryStream<C>,
         result: Result<T, E>,
     },
     #[state_machine_future(ready)]
@@ -32,14 +34,15 @@ where
     Failed(E),
 }
 
-impl<F, T, E> PollTransaction<F, T, E> for Transaction<F, T, E>
+impl<F, T, E, C> PollTransaction<F, T, E, C> for Transaction<F, T, E, C>
 where
     F: Future<Item = T, Error = E>,
     E: From<Error>,
+    C: Channel<Request>,
 {
     fn poll_start<'a>(
-        state: &'a mut RentToOwn<'a, Start<F, T, E>>,
-    ) -> Poll<AfterStart<F, T, E>, E> {
+        state: &'a mut RentToOwn<'a, Start<F, T, E, C>>,
+    ) -> Poll<AfterStart<F, T, E, C>, E> {
         let state = state.take();
         transition!(Beginning {
             begin: state.client.batch_execute("BEGIN"),
@@ -49,8 +52,8 @@ where
     }
 
     fn poll_beginning<'a>(
-        state: &'a mut RentToOwn<'a, Beginning<F, T, E>>,
-    ) -> Poll<AfterBeginning<F, T, E>, E> {
+        state: &'a mut RentToOwn<'a, Beginning<F, T, E, C>>,
+    ) -> Poll<AfterBeginning<F, T, E, C>, E> {
         while let Some(_) = try_ready!(state.begin.poll()) {}
 
         let state = state.take();
@@ -61,8 +64,8 @@ where
     }
 
     fn poll_running<'a>(
-        state: &'a mut RentToOwn<'a, Running<F, T, E>>,
-    ) -> Poll<AfterRunning<T, E>, E> {
+        state: &'a mut RentToOwn<'a, Running<F, T, E, C>>,
+    ) -> Poll<AfterRunning<T, E, C>, E> {
         match state.future.poll() {
             Ok(Async::NotReady) => Ok(Async::NotReady),
             Ok(Async::Ready(t)) => transition!(Finishing {
@@ -77,7 +80,7 @@ where
     }
 
     fn poll_finishing<'a>(
-        state: &'a mut RentToOwn<'a, Finishing<T, E>>,
+        state: &'a mut RentToOwn<'a, Finishing<T, E, C>>,
     ) -> Poll<AfterFinishing<T>, E> {
         loop {
             match state.future.poll() {
@@ -97,12 +100,13 @@ where
     }
 }
 
-impl<F, T, E> TransactionFuture<F, T, E>
+impl<F, T, E, C> TransactionFuture<F, T, E, C>
 where
     F: Future<Item = T, Error = E>,
     E: From<Error>,
+    C: Channel<Request>,
 {
-    pub fn new(client: Client, future: F) -> TransactionFuture<F, T, E> {
+    pub fn new(client: Client<C>, future: F) -> TransactionFuture<F, T, E, C> {
         Transaction::start(client, future)
     }
 }

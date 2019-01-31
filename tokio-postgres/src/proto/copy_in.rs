@@ -9,7 +9,8 @@ use std::error::Error as StdError;
 
 use crate::proto::client::{Client, PendingRequest};
 use crate::proto::statement::Statement;
-use crate::Error;
+use crate::proto::Request;
+use crate::{Error, Channel};
 
 pub enum CopyMessage {
     Data(Vec<u8>),
@@ -61,16 +62,17 @@ impl Stream for CopyInReceiver {
 }
 
 #[derive(StateMachineFuture)]
-pub enum CopyIn<S>
+pub enum CopyIn<S, C>
 where
     S: Stream,
     S::Item: IntoBuf,
     <S::Item as IntoBuf>::Buf: Send,
     S::Error: Into<Box<dyn StdError + Sync + Send>>,
+    C: Channel<Request>,
 {
     #[state_machine_future(start, transitions(ReadCopyInResponse))]
     Start {
-        client: Client,
+        client: Client<C>,
         request: PendingRequest,
         statement: Statement,
         stream: S,
@@ -102,14 +104,15 @@ where
     Failed(Error),
 }
 
-impl<S> PollCopyIn<S> for CopyIn<S>
+impl<S, C> PollCopyIn<S, C> for CopyIn<S, C>
 where
     S: Stream,
     S::Item: IntoBuf,
     <S::Item as IntoBuf>::Buf: Send,
     S::Error: Into<Box<dyn StdError + Sync + Send>>,
+    C: Channel<Request>,
 {
-    fn poll_start<'a>(state: &'a mut RentToOwn<'a, Start<S>>) -> Poll<AfterStart<S>, Error> {
+    fn poll_start<'a>(state: &'a mut RentToOwn<'a, Start<S, C>>) -> Poll<AfterStart<S>, Error> {
         let state = state.take();
         let receiver = state.client.send(state.request)?;
 
@@ -215,20 +218,21 @@ where
     }
 }
 
-impl<S> CopyInFuture<S>
+impl<S, C> CopyInFuture<S, C>
 where
     S: Stream,
     S::Item: IntoBuf,
     <S::Item as IntoBuf>::Buf: Send,
     S::Error: Into<Box<dyn StdError + Sync + Send>>,
+    C: Channel<Request>,
 {
     pub fn new(
-        client: Client,
+        client: Client<C>,
         request: PendingRequest,
         statement: Statement,
         stream: S,
         sender: mpsc::Sender<CopyMessage>,
-    ) -> CopyInFuture<S> {
+    ) -> CopyInFuture<S, C> {
         CopyIn::start(client, request, statement, stream, sender)
     }
 }

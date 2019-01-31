@@ -5,13 +5,16 @@ use state_machine_future::{transition, RentToOwn, StateMachineFuture};
 
 use crate::proto::client::{Client, PendingRequest};
 use crate::proto::statement::Statement;
-use crate::Error;
+use crate::proto::Request;
+use crate::{Channel, Error};
 
 #[derive(StateMachineFuture)]
-pub enum Execute {
+pub enum Execute<C>
+where C: Channel<Request>,
+{
     #[state_machine_future(start, transitions(ReadResponse))]
     Start {
-        client: Client,
+        client: Client<C>,
         request: PendingRequest,
         statement: Statement,
     },
@@ -23,8 +26,11 @@ pub enum Execute {
     Failed(Error),
 }
 
-impl PollExecute for Execute {
-    fn poll_start<'a>(state: &'a mut RentToOwn<'a, Start>) -> Poll<AfterStart, Error> {
+impl<C> PollExecute<C> for Execute<C>
+where
+    C: Channel<Request>,
+{
+    fn poll_start<'a>(state: &'a mut RentToOwn<'a, Start<C>>) -> Poll<AfterStart, Error> {
         let state = state.take();
         let receiver = state.client.send(state.request)?;
 
@@ -61,8 +67,10 @@ impl PollExecute for Execute {
     }
 }
 
-impl ExecuteFuture {
-    pub fn new(client: Client, request: PendingRequest, statement: Statement) -> ExecuteFuture {
+impl<C> ExecuteFuture<C>
+where C: Channel<Request>,
+{
+    pub fn new(client: Client<C>, request: PendingRequest, statement: Statement) -> ExecuteFuture<C> {
         Execute::start(client, request, statement)
     }
 }

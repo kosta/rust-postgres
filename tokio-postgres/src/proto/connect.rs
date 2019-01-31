@@ -1,37 +1,42 @@
-use futures::{Async, Future, Poll};
+use futures::{Async, Future, Poll, Stream};
 use state_machine_future::{transition, RentToOwn, StateMachineFuture};
 
-use crate::proto::{Client, ConnectOnceFuture, Connection, MaybeTlsStream};
-use crate::{Config, Error, Host, MakeTlsConnect, Socket};
+use crate::proto::{Client, ConnectOnceFuture, Connection, MaybeTlsStream, Request};
+use crate::{Channel, Config, Error, Host, MakeTlsConnect, Socket};
 
 #[derive(StateMachineFuture)]
-pub enum Connect<T>
+pub enum Connect<T, C, MC>
 where
     T: MakeTlsConnect<Socket>,
+    C: Channel<Request>,
+    MC: Fn() -> C + Clone,
 {
     #[state_machine_future(start, transitions(Connecting))]
     Start {
         tls: T,
         config: Result<Config, Error>,
+        make_ch: MC,
     },
     #[state_machine_future(transitions(Finished))]
     Connecting {
-        future: ConnectOnceFuture<T::TlsConnect>,
+        future: ConnectOnceFuture<T::TlsConnect, C, MC>,
         idx: usize,
         tls: T,
         config: Config,
+        make_ch: MC,
     },
     #[state_machine_future(ready)]
-    Finished((Client, Connection<MaybeTlsStream<Socket, T::Stream>>)),
+    Finished((Client<C>, Connection<MaybeTlsStream<Socket, T::Stream>, C>)),
     #[state_machine_future(error)]
     Failed(Error),
 }
 
-impl<T> PollConnect<T> for Connect<T>
+impl<T, C, MC> PollConnect<T, C, MC> for Connect<T, C, MC>
 where
     T: MakeTlsConnect<Socket>,
+    C: Channel<Request>,
 {
-    fn poll_start<'a>(state: &'a mut RentToOwn<'a, Start<T>>) -> Poll<AfterStart<T>, Error> {
+    fn poll_start<'a>(state: &'a mut RentToOwn<'a, Start<T, C, MC>>) -> Poll<AfterStart<T, C, MC>, Error> {
         let mut state = state.take();
 
         let config = state.config?;
@@ -56,16 +61,17 @@ where
             .map_err(|e| Error::tls(e.into()))?;
 
         transition!(Connecting {
-            future: ConnectOnceFuture::new(0, tls, config.clone()),
+            future: ConnectOnceFuture::new(0, tls, config.clone(), state.make_ch.clone()),
             idx: 0,
             tls: state.tls,
             config,
+            make_ch: state.make_ch,
         })
     }
 
     fn poll_connecting<'a>(
-        state: &'a mut RentToOwn<'a, Connecting<T>>,
-    ) -> Poll<AfterConnecting<T>, Error> {
+        state: &'a mut RentToOwn<'a, Connecting<T, C, MC>>,
+    ) -> Poll<AfterConnecting<T, C, MC>, Error> {
         loop {
             match state.future.poll() {
                 Ok(Async::Ready(r)) => transition!(Finished(r)),
@@ -89,18 +95,20 @@ where
                         .make_tls_connect(hostname)
                         .map_err(|e| Error::tls(e.into()))?;
 
-                    state.future = ConnectOnceFuture::new(state.idx, tls, state.config.clone());
+                    state.future = ConnectOnceFuture::new(state.idx, tls, state.config.clone(), state.make_ch.clone());
                 }
             }
         }
     }
 }
 
-impl<T> ConnectFuture<T>
+impl<T, C, MC> ConnectFuture<T, C, MC>
 where
     T: MakeTlsConnect<Socket>,
+    C: Channel<Request>,
+    MC: Fn() -> C + Clone,
 {
-    pub fn new(tls: T, config: Result<Config, Error>) -> ConnectFuture<T> {
-        Connect::start(tls, config)
+    pub fn new(tls: T, config: Result<Config, Error>, make_ch: MC) -> ConnectFuture<T, C, MC> {
+        Connect::start(tls, config, make_ch)
     }
 }

@@ -2,14 +2,22 @@ use std::sync::Arc;
 
 use crate::proto::client::WeakClient;
 use crate::proto::statement::Statement;
+use crate::proto::Request;
+use crate::Channel;
 
-struct Inner {
-    client: WeakClient,
+struct Inner<C>
+where
+    C: Channel<Request>,
+{
+    client: WeakClient<C>,
     name: String,
     statement: Statement,
 }
 
-impl Drop for Inner {
+impl<C> Drop for Inner<C>
+where
+    C: Channel<Request>,
+{
     fn drop(&mut self) {
         if let Some(client) = self.client.upgrade() {
             client.close_portal(&self.name);
@@ -18,10 +26,16 @@ impl Drop for Inner {
 }
 
 #[derive(Clone)]
-pub struct Portal(Arc<Inner>);
+pub struct Portal<C>(Arc<Inner<C>>)
+where
+    C: Channel<Request>,
+;
 
-impl Portal {
-    pub fn new(client: WeakClient, name: String, statement: Statement) -> Portal {
+impl<C> Portal<C>
+where
+    C: Channel<Request>,
+{
+    pub fn new(client: WeakClient<C>, name: String, statement: Statement) -> Portal<C> {
         Portal(Arc::new(Inner {
             client,
             name,

@@ -6,46 +6,51 @@ use state_machine_future::{transition, RentToOwn, StateMachineFuture};
 use std::io;
 
 use crate::proto::{
-    Client, ConnectRawFuture, ConnectSocketFuture, Connection, MaybeTlsStream, SimpleQueryStream,
+    Client, ConnectRawFuture, ConnectSocketFuture, Connection, MaybeTlsStream, SimpleQueryStream, Request
 };
-use crate::{Config, Error, Socket, TargetSessionAttrs, TlsConnect};
+use crate::{Channel, Config, Error, Socket, TargetSessionAttrs, TlsConnect};
 
 #[derive(StateMachineFuture)]
-pub enum ConnectOnce<T>
+pub enum ConnectOnce<T, C, MC>
 where
     T: TlsConnect<Socket>,
+    C: Channel<Request>,
+    MC: Fn() -> C + Clone,
 {
     #[state_machine_future(start, transitions(ConnectingSocket))]
-    Start { idx: usize, tls: T, config: Config },
+    Start { idx: usize, tls: T, config: Config, make_ch: MC },
     #[state_machine_future(transitions(ConnectingRaw))]
     ConnectingSocket {
         future: ConnectSocketFuture,
         idx: usize,
         tls: T,
         config: Config,
+        make_ch: MC,
     },
     #[state_machine_future(transitions(CheckingSessionAttrs, Finished))]
     ConnectingRaw {
-        future: ConnectRawFuture<Socket, T>,
+        future: ConnectRawFuture<Socket, T, C, MC>,
         target_session_attrs: TargetSessionAttrs,
     },
     #[state_machine_future(transitions(Finished))]
     CheckingSessionAttrs {
         stream: SimpleQueryStream,
-        client: Client,
-        connection: Connection<MaybeTlsStream<Socket, T::Stream>>,
+        client: Client<C>,
+        connection: Connection<MaybeTlsStream<Socket, T::Stream>, C>,
     },
     #[state_machine_future(ready)]
-    Finished((Client, Connection<MaybeTlsStream<Socket, T::Stream>>)),
+    Finished((Client<C>, Connection<MaybeTlsStream<Socket, T::Stream>, C>)),
     #[state_machine_future(error)]
     Failed(Error),
 }
 
-impl<T> PollConnectOnce<T> for ConnectOnce<T>
+impl<T, C, MC> PollConnectOnce<T, C, MC> for ConnectOnce<T, C, MC>
 where
     T: TlsConnect<Socket>,
+    C: Channel<Request>,
+    MC: Fn() -> C + Clone,
 {
-    fn poll_start<'a>(state: &'a mut RentToOwn<'a, Start<T>>) -> Poll<AfterStart<T>, Error> {
+    fn poll_start<'a>(state: &'a mut RentToOwn<'a, Start<T, C, MC>>) -> Poll<AfterStart<T, C, MC>, Error> {
         let state = state.take();
 
         transition!(ConnectingSocket {
@@ -53,24 +58,25 @@ where
             idx: state.idx,
             tls: state.tls,
             config: state.config,
+            make_ch: state.make_ch,
         })
     }
 
     fn poll_connecting_socket<'a>(
-        state: &'a mut RentToOwn<'a, ConnectingSocket<T>>,
-    ) -> Poll<AfterConnectingSocket<T>, Error> {
+        state: &'a mut RentToOwn<'a, ConnectingSocket<T, C, MC>>,
+    ) -> Poll<AfterConnectingSocket<T, C, MC>, Error> {
         let socket = try_ready!(state.future.poll());
         let state = state.take();
 
         transition!(ConnectingRaw {
             target_session_attrs: state.config.0.target_session_attrs,
-            future: ConnectRawFuture::new(socket, state.tls, state.config, Some(state.idx)),
+            future: ConnectRawFuture::new(socket, state.tls, state.config, Some(state.idx), state.make_ch),
         })
     }
 
     fn poll_connecting_raw<'a>(
-        state: &'a mut RentToOwn<'a, ConnectingRaw<T>>,
-    ) -> Poll<AfterConnectingRaw<T>, Error> {
+        state: &'a mut RentToOwn<'a, ConnectingRaw<T, C, MC>>,
+    ) -> Poll<AfterConnectingRaw<T, C>, Error> {
         let (client, connection) = try_ready!(state.future.poll());
 
         if let TargetSessionAttrs::ReadWrite = state.target_session_attrs {
@@ -85,8 +91,8 @@ where
     }
 
     fn poll_checking_session_attrs<'a>(
-        state: &'a mut RentToOwn<'a, CheckingSessionAttrs<T>>,
-    ) -> Poll<AfterCheckingSessionAttrs<T>, Error> {
+        state: &'a mut RentToOwn<'a, CheckingSessionAttrs<T, C>>,
+    ) -> Poll<AfterCheckingSessionAttrs<T, C>, Error> {
         if let Async::Ready(()) = state.connection.poll()? {
             return Err(Error::closed());
         }
@@ -109,11 +115,13 @@ where
     }
 }
 
-impl<T> ConnectOnceFuture<T>
+impl<T, C, MC> ConnectOnceFuture<T, C, MC>
 where
     T: TlsConnect<Socket>,
+    C: Channel<Request>,
+    MC: Fn() -> C + Clone,
 {
-    pub fn new(idx: usize, tls: T, config: Config) -> ConnectOnceFuture<T> {
-        ConnectOnce::start(idx, tls, config)
+    pub fn new(idx: usize, tls: T, config: Config, make_ch: MC) -> ConnectOnceFuture<T, C, MC> {
+        ConnectOnce::start(idx, tls, config, make_ch)
     }
 }

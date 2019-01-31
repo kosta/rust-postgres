@@ -102,7 +102,7 @@
 #![warn(rust_2018_idioms, clippy::all)]
 
 use bytes::IntoBuf;
-use futures::{try_ready, Async, Future, Poll, Stream};
+use futures::{try_ready, Async, Future, Poll, Stream, Sink};
 use std::error::Error as StdError;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio_io::{AsyncRead, AsyncWrite};
@@ -115,6 +115,7 @@ pub use crate::socket::Socket;
 pub use crate::stmt::Column;
 pub use crate::tls::*;
 use crate::types::{ToSql, Type};
+use crate::proto::Request;
 
 mod config;
 pub mod error;
@@ -156,9 +157,10 @@ where
 ///
 /// The client is one half of what is returned when a connection is established. Users interact with the database
 /// through this client object.
-pub struct Client(proto::Client);
+pub struct Client<C: Channel<Request>>(proto::Client<C>);
 
-impl Client {
+impl<C: Channel<Request>> Client<C>
+{
     /// Creates a new prepared statement.
     ///
     /// Prepared statements can be executed repeatedly, and may contain query parameters (indicated by `$1`, `$2`, etc),
@@ -273,7 +275,7 @@ impl Client {
     ///
     /// Unlike the other futures created by a client, this future is *not* atomic with respect to other requests. If you
     /// attempt to execute it concurrently with other futures created by the same connection, they will interleave!
-    pub fn build_transaction(&mut self) -> TransactionBuilder {
+    pub fn build_transaction(&mut self) -> TransactionBuilder<C> {
         TransactionBuilder(self.0.clone())
     }
 
@@ -327,12 +329,15 @@ impl Client {
 /// `Connection` implements `Future`, and only resolves when the connection is closed, either because a fatal error has
 /// occurred, or because its associated `Client` has dropped and all outstanding work has completed.
 #[must_use = "futures do nothing unless polled"]
-pub struct Connection<S, T>(proto::Connection<proto::MaybeTlsStream<S, T>>);
+pub struct Connection<S, T, C>(proto::Connection<proto::MaybeTlsStream<S, T>, C>)
+where
+    C: Channel<Request>;
 
-impl<S, T> Connection<S, T>
+impl<S, T, C> Connection<S, T, C>
 where
     S: AsyncRead + AsyncWrite,
     T: AsyncRead + AsyncWrite,
+    C: Channel<Request>,
 {
     /// Returns the value of a runtime parameter for this connection.
     pub fn parameter(&self, name: &str) -> Option<&str> {
@@ -348,10 +353,11 @@ where
     }
 }
 
-impl<S, T> Future for Connection<S, T>
+impl<S, T, C: Channel<Request>> Future for Connection<S, T, C>
 where
     S: AsyncRead + AsyncWrite,
     T: AsyncRead + AsyncWrite,
+    C: Channel<Request>
 {
     type Item = ();
     type Error = Error;
@@ -413,9 +419,10 @@ impl Future for Execute {
 pub struct Portal(proto::Portal);
 
 /// A builder type which can wrap a future in a database transaction.
-pub struct TransactionBuilder(proto::Client);
+pub struct TransactionBuilder<C>(proto::Client<C>);
 
-impl TransactionBuilder {
+impl<C: Channel<Request>> TransactionBuilder<C>
+{
     pub fn build<T>(self, future: T) -> Transaction<T>
     where
         T: Future,
@@ -481,5 +488,50 @@ impl Notification {
     /// The "payload" string passed from the notifying process.
     pub fn payload(&self) -> &str {
         &self.payload
+    }
+}
+
+pub trait IsClosed {
+    fn is_closed(&self) -> bool;
+}
+
+impl<T> IsClosed for futures::sync::mpsc::Sender<T> {
+    fn is_closed(&self) -> bool {
+        self.is_closed()
+    }
+}
+
+impl<T> IsClosed for futures::sync::mpsc::UnboundedSender<T> {
+    fn is_closed(&self) -> bool {
+        self.is_closed()
+    }
+}
+
+pub trait Channel<T> {
+    type TXE: std::fmt::Debug;
+    type TX: IsClosed + Sink<SinkItem=T, SinkError=Self::TXE>;
+    type RX: Stream<Item=T, Error=()>;
+
+    // TODO: Is there a more elegant way?
+    fn into_parts(self) -> (Self::TX, Self::RX);
+}
+
+impl<T> Channel<T> for (futures::sync::mpsc::Sender<T>, futures::sync::mpsc::Receiver<T>) {
+    type TXE=futures::sync::mpsc::SendError<T>;
+    type TX=futures::sync::mpsc::Sender<T>;
+    type RX=futures::sync::mpsc::Receiver<T>;
+
+    fn into_parts(self) -> (Self::TX, Self::RX) {
+        (self.0, self.1)
+    }
+}
+
+impl<T> Channel<T> for (futures::sync::mpsc::UnboundedSender<T>, futures::sync::mpsc::UnboundedReceiver<T>) {
+    type TXE=futures::sync::mpsc::SendError<T>;
+    type TX=futures::sync::mpsc::UnboundedSender<T>;
+    type RX=futures::sync::mpsc::UnboundedReceiver<T>;
+
+    fn into_parts(self) -> (Self::TX, Self::RX) {
+        (self.0, self.1)
     }
 }

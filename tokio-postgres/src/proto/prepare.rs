@@ -12,31 +12,35 @@ use crate::proto::client::{Client, PendingRequest};
 use crate::proto::statement::Statement;
 use crate::proto::typeinfo::TypeinfoFuture;
 use crate::types::{Oid, Type};
-use crate::{Column, Error};
+use crate::proto::Request;
+use crate::{Column, Error, Channel};
 
 #[derive(StateMachineFuture)]
-pub enum Prepare {
+pub enum Prepare<C>
+where
+    C: Channel<Request>,
+{
     #[state_machine_future(start, transitions(ReadParseComplete))]
     Start {
-        client: Client,
+        client: Client<C>,
         request: PendingRequest,
         name: String,
     },
     #[state_machine_future(transitions(ReadParameterDescription))]
     ReadParseComplete {
-        client: Client,
+        client: Client<C>,
         receiver: mpsc::Receiver<Message>,
         name: String,
     },
     #[state_machine_future(transitions(ReadRowDescription))]
     ReadParameterDescription {
-        client: Client,
+        client: Client<C>,
         receiver: mpsc::Receiver<Message>,
         name: String,
     },
     #[state_machine_future(transitions(GetParameterTypes, GetColumnTypes, Finished))]
     ReadRowDescription {
-        client: Client,
+        client: Client<C>,
         receiver: mpsc::Receiver<Message>,
         name: String,
         parameters: Vec<Oid>,
@@ -64,8 +68,11 @@ pub enum Prepare {
     Failed(Error),
 }
 
-impl PollPrepare for Prepare {
-    fn poll_start<'a>(state: &'a mut RentToOwn<'a, Start>) -> Poll<AfterStart, Error> {
+impl<C> PollPrepare<C> for Prepare<C>
+where
+    C: Channel<Request>,
+{
+    fn poll_start<'a>(state: &'a mut RentToOwn<'a, Start<C>>) -> Poll<AfterStart<C>, Error> {
         let state = state.take();
         let receiver = state.client.send(state.request)?;
 
@@ -77,8 +84,8 @@ impl PollPrepare for Prepare {
     }
 
     fn poll_read_parse_complete<'a>(
-        state: &'a mut RentToOwn<'a, ReadParseComplete>,
-    ) -> Poll<AfterReadParseComplete, Error> {
+        state: &'a mut RentToOwn<'a, ReadParseComplete<C>>,
+    ) -> Poll<AfterReadParseComplete<C>, Error> {
         let message = try_ready_receive!(state.receiver.poll());
         let state = state.take();
 
@@ -95,8 +102,8 @@ impl PollPrepare for Prepare {
     }
 
     fn poll_read_parameter_description<'a>(
-        state: &'a mut RentToOwn<'a, ReadParameterDescription>,
-    ) -> Poll<AfterReadParameterDescription, Error> {
+        state: &'a mut RentToOwn<'a, ReadParameterDescription<C>>,
+    ) -> Poll<AfterReadParameterDescription<C>, Error> {
         let message = try_ready_receive!(state.receiver.poll());
         let state = state.take();
 
@@ -113,7 +120,7 @@ impl PollPrepare for Prepare {
     }
 
     fn poll_read_row_description<'a>(
-        state: &'a mut RentToOwn<'a, ReadRowDescription>,
+        state: &'a mut RentToOwn<'a, ReadRowDescription<C>>,
     ) -> Poll<AfterReadRowDescription, Error> {
         let message = try_ready_receive!(state.receiver.poll());
         let state = state.take();
@@ -221,8 +228,11 @@ impl PollPrepare for Prepare {
     }
 }
 
-impl PrepareFuture {
-    pub fn new(client: Client, request: PendingRequest, name: String) -> PrepareFuture {
+impl<C> PrepareFuture<C>
+where
+    C: Channel<Request>,
+{
+    pub fn new(client: Client<C>, request: PendingRequest, name: String) -> PrepareFuture<C> {
         Prepare::start(client, request, name)
     }
 }

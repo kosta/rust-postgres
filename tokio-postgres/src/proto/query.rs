@@ -6,7 +6,8 @@ use std::mem;
 use crate::proto::client::{Client, PendingRequest};
 use crate::proto::portal::Portal;
 use crate::proto::statement::Statement;
-use crate::{Error, Row};
+use crate::proto::Request;
+use crate::{Error, Row, Channel};
 
 pub trait StatementHolder {
     fn statement(&self) -> &Statement;
@@ -18,15 +19,21 @@ impl StatementHolder for Statement {
     }
 }
 
-impl StatementHolder for Portal {
+impl<C> StatementHolder for Portal<C>
+where
+    C: Channel<Request>,
+{
     fn statement(&self) -> &Statement {
         self.statement()
     }
 }
 
-enum State<T> {
+enum State<T, C>
+where
+    C: Channel<Request>,
+{
     Start {
-        client: Client,
+        client: Client<C>,
         request: PendingRequest,
         statement: T,
     },
@@ -37,11 +44,14 @@ enum State<T> {
     Done,
 }
 
-pub struct QueryStream<T>(State<T>);
+pub struct QueryStream<T, C>(State<T, C>)
+where
+    C: Channel<Request>;
 
-impl<T> Stream for QueryStream<T>
+impl<T, C> Stream for QueryStream<T, C>
 where
     T: StatementHolder,
+    C: Channel<Request>,
 {
     type Item = Row;
     type Error = Error;
@@ -107,11 +117,12 @@ where
     }
 }
 
-impl<T> QueryStream<T>
+impl<T, C> QueryStream<T, C>
 where
     T: StatementHolder,
+    C: Channel<Request>,
 {
-    pub fn new(client: Client, request: PendingRequest, statement: T) -> QueryStream<T> {
+    pub fn new(client: Client<C>, request: PendingRequest, statement: T) -> QueryStream<T, C> {
         QueryStream(State::Start {
             client,
             request,

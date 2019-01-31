@@ -2,8 +2,10 @@ use futures::stream::{self, Stream};
 use futures::{try_ready, Async, Future, Poll};
 use state_machine_future::{transition, RentToOwn, StateMachineFuture};
 
+use crate::Channel;
 use crate::error::{Error, SqlState};
 use crate::next_statement;
+use crate::proto::Request;
 use crate::proto::client::Client;
 use crate::proto::prepare::PrepareFuture;
 use crate::proto::query::QueryStream;
@@ -26,34 +28,40 @@ ORDER BY oid
 ";
 
 #[derive(StateMachineFuture)]
-pub enum TypeinfoEnum {
+pub enum TypeinfoEnum<C>
+where
+    C: Channel<Request>,
+{
     #[state_machine_future(start, transitions(PreparingTypeinfoEnum, QueryingEnumVariants))]
-    Start { oid: Oid, client: Client },
+    Start { oid: Oid, client: Client<C> },
     #[state_machine_future(transitions(PreparingTypeinfoEnumFallback, QueryingEnumVariants))]
     PreparingTypeinfoEnum {
-        future: Box<PrepareFuture>,
+        future: Box<PrepareFuture<C>>,
         oid: Oid,
-        client: Client,
+        client: Client<C>,
     },
     #[state_machine_future(transitions(QueryingEnumVariants))]
     PreparingTypeinfoEnumFallback {
-        future: Box<PrepareFuture>,
+        future: Box<PrepareFuture<C>>,
         oid: Oid,
-        client: Client,
+        client: Client<C>,
     },
     #[state_machine_future(transitions(Finished))]
     QueryingEnumVariants {
-        future: stream::Collect<QueryStream<Statement>>,
-        client: Client,
+        future: stream::Collect<QueryStream<Statement<C>, C>>,
+        client: Client<C>,
     },
     #[state_machine_future(ready)]
-    Finished((Vec<String>, Client)),
+    Finished((Vec<String>, Client<C>)),
     #[state_machine_future(error)]
     Failed(Error),
 }
 
-impl PollTypeinfoEnum for TypeinfoEnum {
-    fn poll_start<'a>(state: &'a mut RentToOwn<'a, Start>) -> Poll<AfterStart, Error> {
+impl<C> PollTypeinfoEnum<C> for TypeinfoEnum<C>
+where
+    C: Channel<Request>,
+{
+    fn poll_start<'a>(state: &'a mut RentToOwn<'a, Start<C>>) -> Poll<AfterStart<C>, Error> {
         let state = state.take();
 
         match state.client.typeinfo_enum_query() {
@@ -74,8 +82,8 @@ impl PollTypeinfoEnum for TypeinfoEnum {
     }
 
     fn poll_preparing_typeinfo_enum<'a>(
-        state: &'a mut RentToOwn<'a, PreparingTypeinfoEnum>,
-    ) -> Poll<AfterPreparingTypeinfoEnum, Error> {
+        state: &'a mut RentToOwn<'a, PreparingTypeinfoEnum<C>>,
+    ) -> Poll<AfterPreparingTypeinfoEnum<C>, Error> {
         let statement = match state.future.poll() {
             Ok(Async::Ready(statement)) => statement,
             Ok(Async::NotReady) => return Ok(Async::NotReady),
@@ -104,8 +112,8 @@ impl PollTypeinfoEnum for TypeinfoEnum {
     }
 
     fn poll_preparing_typeinfo_enum_fallback<'a>(
-        state: &'a mut RentToOwn<'a, PreparingTypeinfoEnumFallback>,
-    ) -> Poll<AfterPreparingTypeinfoEnumFallback, Error> {
+        state: &'a mut RentToOwn<'a, PreparingTypeinfoEnumFallback<C>>,
+    ) -> Poll<AfterPreparingTypeinfoEnumFallback<C>, Error> {
         let statement = try_ready!(state.future.poll());
         let state = state.take();
 
@@ -117,8 +125,8 @@ impl PollTypeinfoEnum for TypeinfoEnum {
     }
 
     fn poll_querying_enum_variants<'a>(
-        state: &'a mut RentToOwn<'a, QueryingEnumVariants>,
-    ) -> Poll<AfterQueryingEnumVariants, Error> {
+        state: &'a mut RentToOwn<'a, QueryingEnumVariants<C>>,
+    ) -> Poll<AfterQueryingEnumVariants<C>, Error> {
         let rows = try_ready!(state.future.poll());
         let state = state.take();
 
@@ -131,8 +139,11 @@ impl PollTypeinfoEnum for TypeinfoEnum {
     }
 }
 
-impl TypeinfoEnumFuture {
-    pub fn new(oid: Oid, client: Client) -> TypeinfoEnumFuture {
+impl<C> TypeinfoEnumFuture<C>
+where
+    C: Channel<Request>,
+{
+    pub fn new(oid: Oid, client: Client<C>) -> TypeinfoEnumFuture<C> {
         TypeinfoEnum::start(oid, client)
     }
 }

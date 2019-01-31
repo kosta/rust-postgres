@@ -4,6 +4,8 @@ use state_machine_future::{transition, RentToOwn, StateMachineFuture};
 use std::mem;
 use std::vec;
 
+use crate::Channel;
+use crate::proto::Request;
 use crate::error::Error;
 use crate::next_statement;
 use crate::proto::client::Client;
@@ -23,22 +25,25 @@ ORDER BY attnum
 ";
 
 #[derive(StateMachineFuture)]
-pub enum TypeinfoComposite {
+pub enum TypeinfoComposite<C>
+where
+    C: Channel<Request>,
+{
     #[state_machine_future(
         start,
         transitions(PreparingTypeinfoComposite, QueryingCompositeFields)
     )]
-    Start { oid: Oid, client: Client },
+    Start { oid: Oid, client: Client<C> },
     #[state_machine_future(transitions(QueryingCompositeFields))]
     PreparingTypeinfoComposite {
-        future: Box<PrepareFuture>,
+        future: Box<PrepareFuture<C>>,
         oid: Oid,
-        client: Client,
+        client: Client<C>,
     },
     #[state_machine_future(transitions(QueryingCompositeFieldTypes, Finished))]
     QueryingCompositeFields {
-        future: stream::Collect<QueryStream<Statement>>,
-        client: Client,
+        future: stream::Collect<QueryStream<Statement<C>, C>>,
+        client: Client<C>,
     },
     #[state_machine_future(transitions(Finished))]
     QueryingCompositeFieldTypes {
@@ -48,13 +53,16 @@ pub enum TypeinfoComposite {
         fields: Vec<Field>,
     },
     #[state_machine_future(ready)]
-    Finished((Vec<Field>, Client)),
+    Finished((Vec<Field>, Client<C>)),
     #[state_machine_future(error)]
     Failed(Error),
 }
 
-impl PollTypeinfoComposite for TypeinfoComposite {
-    fn poll_start<'a>(state: &'a mut RentToOwn<'a, Start>) -> Poll<AfterStart, Error> {
+impl<C> PollTypeinfoComposite<C> for TypeinfoComposite<C>
+where
+    C: Channel<Request>,
+{
+    fn poll_start<'a>(state: &'a mut RentToOwn<'a, Start<C>>) -> Poll<AfterStart<C>, Error> {
         let state = state.take();
 
         match state.client.typeinfo_composite_query() {
@@ -75,8 +83,8 @@ impl PollTypeinfoComposite for TypeinfoComposite {
     }
 
     fn poll_preparing_typeinfo_composite<'a>(
-        state: &'a mut RentToOwn<'a, PreparingTypeinfoComposite>,
-    ) -> Poll<AfterPreparingTypeinfoComposite, Error> {
+        state: &'a mut RentToOwn<'a, PreparingTypeinfoComposite<C>>,
+    ) -> Poll<AfterPreparingTypeinfoComposite<C>, Error> {
         let statement = try_ready!(state.future.poll());
         let state = state.take();
 
@@ -88,8 +96,8 @@ impl PollTypeinfoComposite for TypeinfoComposite {
     }
 
     fn poll_querying_composite_fields<'a>(
-        state: &'a mut RentToOwn<'a, QueryingCompositeFields>,
-    ) -> Poll<AfterQueryingCompositeFields, Error> {
+        state: &'a mut RentToOwn<'a, QueryingCompositeFields<C>>,
+    ) -> Poll<AfterQueryingCompositeFields<C>, Error> {
         let rows = try_ready!(state.future.poll());
         let state = state.take();
 
@@ -116,7 +124,7 @@ impl PollTypeinfoComposite for TypeinfoComposite {
 
     fn poll_querying_composite_field_types<'a>(
         state: &'a mut RentToOwn<'a, QueryingCompositeFieldTypes>,
-    ) -> Poll<AfterQueryingCompositeFieldTypes, Error> {
+    ) -> Poll<AfterQueryingCompositeFieldTypes<C>, Error> {
         loop {
             let (ty, client) = try_ready!(state.future.poll());
 
@@ -137,8 +145,11 @@ impl PollTypeinfoComposite for TypeinfoComposite {
     }
 }
 
-impl TypeinfoCompositeFuture {
-    pub fn new(oid: Oid, client: Client) -> TypeinfoCompositeFuture {
+impl<C> TypeinfoCompositeFuture<C>
+where
+    C: Channel<Request>,
+{
+    pub fn new(oid: Oid, client: Client<C>) -> TypeinfoCompositeFuture<C> {
         TypeinfoComposite::start(oid, client)
     }
 }

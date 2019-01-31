@@ -8,6 +8,7 @@ use std::io;
 use tokio_codec::Framed;
 use tokio_io::{AsyncRead, AsyncWrite};
 
+use crate::Channel;
 use crate::proto::codec::PostgresCodec;
 use crate::proto::copy_in::CopyInReceiver;
 use crate::proto::idle::IdleGuard;
@@ -40,25 +41,28 @@ enum State {
     Closing,
 }
 
-pub struct Connection<S> {
+pub struct Connection<S, C>
+    where C: Channel<Request>
+{
     stream: Framed<S, PostgresCodec>,
     parameters: HashMap<String, String>,
-    receiver: mpsc::UnboundedReceiver<Request>,
+    receiver: C::RX,
     pending_request: Option<RequestMessages>,
     pending_response: Option<Message>,
     responses: VecDeque<Response>,
     state: State,
 }
 
-impl<S> Connection<S>
+impl<S, C> Connection<S, C>
 where
     S: AsyncRead + AsyncWrite,
+    C: Channel<Request>,
 {
     pub fn new(
         stream: Framed<S, PostgresCodec>,
         parameters: HashMap<String, String>,
-        receiver: mpsc::UnboundedReceiver<Request>,
-    ) -> Connection<S> {
+        receiver: C::RX,
+    ) -> Connection<S, C> {
         Connection {
             stream,
             parameters,
@@ -302,9 +306,10 @@ where
     }
 }
 
-impl<S> Future for Connection<S>
+impl<S, C> Future for Connection<S, C>
 where
     S: AsyncRead + AsyncWrite,
+    C: Channel<Request>,
 {
     type Item = ();
     type Error = Error;

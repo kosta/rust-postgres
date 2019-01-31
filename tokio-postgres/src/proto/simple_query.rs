@@ -4,11 +4,15 @@ use postgres_protocol::message::backend::{DataRowBody, Message};
 use std::mem;
 
 use crate::proto::client::{Client, PendingRequest};
-use crate::Error;
+use crate::proto::Request;
+use crate::{Channel, Error};
 
-pub enum State {
+pub enum State<C>
+where
+    C: Channel<Request>,
+{
     Start {
-        client: Client,
+        client: Client<C>,
         request: PendingRequest,
     },
     ReadResponse {
@@ -17,9 +21,14 @@ pub enum State {
     Done,
 }
 
-pub struct SimpleQueryStream(State);
+pub struct SimpleQueryStream<C>(State<C>)
+where
+    C: Channel<Request>;
 
-impl Stream for SimpleQueryStream {
+impl<C> Stream for SimpleQueryStream<C>
+where
+    C: Channel<Request>,
+{
     type Item = DataRowBody;
     type Error = Error;
 
@@ -62,8 +71,11 @@ impl Stream for SimpleQueryStream {
     }
 }
 
-impl SimpleQueryStream {
-    pub fn new(client: Client, request: PendingRequest) -> SimpleQueryStream {
+impl<C> SimpleQueryStream<C>
+where
+    C: Channel<Request>,
+{
+    pub fn new(client: Client<C>, request: PendingRequest) -> SimpleQueryStream<C> {
         SimpleQueryStream(State::Start { client, request })
     }
 }

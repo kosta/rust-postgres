@@ -12,25 +12,29 @@ use tokio_codec::Framed;
 use tokio_io::{AsyncRead, AsyncWrite};
 
 use crate::proto::{Client, Connection, MaybeTlsStream, PostgresCodec, TlsFuture};
-use crate::{ChannelBinding, Config, Error, TlsConnect};
+use crate::{Channel, ChannelBinding, Config, Error, TlsConnect, Request};
 
 #[derive(StateMachineFuture)]
-pub enum ConnectRaw<S, T>
+pub enum ConnectRaw<S, T, C, MC>
 where
     S: AsyncRead + AsyncWrite,
     T: TlsConnect<S>,
+    C: Channel<Request>,
+    MC: Fn() -> C + Clone,
 {
     #[state_machine_future(start, transitions(SendingStartup))]
     Start {
         future: TlsFuture<S, T>,
         config: Config,
         idx: Option<usize>,
+        make_ch: MC,
     },
     #[state_machine_future(transitions(ReadingAuth))]
     SendingStartup {
         future: sink::Send<Framed<MaybeTlsStream<S, T::Stream>, PostgresCodec>>,
         config: Config,
         idx: Option<usize>,
+        make_ch: MC,
         channel_binding: ChannelBinding,
     },
     #[state_machine_future(transitions(ReadingInfo, SendingPassword, SendingSasl))]
@@ -38,6 +42,7 @@ where
         stream: Framed<MaybeTlsStream<S, T::Stream>, PostgresCodec>,
         config: Config,
         idx: Option<usize>,
+        make_ch: MC,
         channel_binding: ChannelBinding,
     },
     #[state_machine_future(transitions(ReadingAuthCompletion))]
@@ -45,6 +50,7 @@ where
         future: sink::Send<Framed<MaybeTlsStream<S, T::Stream>, PostgresCodec>>,
         config: Config,
         idx: Option<usize>,
+        make_ch: MC,
     },
     #[state_machine_future(transitions(ReadingSasl))]
     SendingSasl {
@@ -52,6 +58,7 @@ where
         scram: ScramSha256,
         config: Config,
         idx: Option<usize>,
+        make_ch: MC,
     },
     #[state_machine_future(transitions(SendingSasl, ReadingAuthCompletion))]
     ReadingSasl {
@@ -59,12 +66,14 @@ where
         scram: ScramSha256,
         config: Config,
         idx: Option<usize>,
+        make_ch: MC,
     },
     #[state_machine_future(transitions(ReadingInfo))]
     ReadingAuthCompletion {
         stream: Framed<MaybeTlsStream<S, T::Stream>, PostgresCodec>,
         config: Config,
         idx: Option<usize>,
+        make_ch: MC,
     },
     #[state_machine_future(transitions(Finished))]
     ReadingInfo {
@@ -74,19 +83,22 @@ where
         parameters: HashMap<String, String>,
         config: Config,
         idx: Option<usize>,
+        make_ch: MC,
     },
     #[state_machine_future(ready)]
-    Finished((Client, Connection<MaybeTlsStream<S, T::Stream>>)),
+    Finished((Client<C>, Connection<MaybeTlsStream<S, T::Stream>, C>)),
     #[state_machine_future(error)]
     Failed(Error),
 }
 
-impl<S, T> PollConnectRaw<S, T> for ConnectRaw<S, T>
+impl<S, T, C, MC> PollConnectRaw<S, T, C, MC> for ConnectRaw<S, T, C, MC>
 where
     S: AsyncRead + AsyncWrite,
     T: TlsConnect<S>,
+    C: Channel<Request>,
+    MC: Fn() -> C + Clone,
 {
-    fn poll_start<'a>(state: &'a mut RentToOwn<'a, Start<S, T>>) -> Poll<AfterStart<S, T>, Error> {
+    fn poll_start<'a>(state: &'a mut RentToOwn<'a, Start<S, T, C, MC>>) -> Poll<AfterStart<S, T, C, MC>, Error> {
         let (stream, channel_binding) = try_ready!(state.future.poll());
         let state = state.take();
 
@@ -114,12 +126,13 @@ where
             config: state.config,
             idx: state.idx,
             channel_binding,
+            make_ch: state.make_ch,
         })
     }
 
     fn poll_sending_startup<'a>(
-        state: &'a mut RentToOwn<'a, SendingStartup<S, T>>,
-    ) -> Poll<AfterSendingStartup<S, T>, Error> {
+        state: &'a mut RentToOwn<'a, SendingStartup<S, T, C, MC>>,
+    ) -> Poll<AfterSendingStartup<S, T, C, MC>, Error> {
         let stream = try_ready!(state.future.poll().map_err(Error::io));
         let state = state.take();
         transition!(ReadingAuth {
@@ -127,12 +140,13 @@ where
             config: state.config,
             idx: state.idx,
             channel_binding: state.channel_binding,
+            make_ch: state.make_ch,
         })
     }
 
     fn poll_reading_auth<'a>(
-        state: &'a mut RentToOwn<'a, ReadingAuth<S, T>>,
-    ) -> Poll<AfterReadingAuth<S, T>, Error> {
+        state: &'a mut RentToOwn<'a, ReadingAuth<S, T, C, MC>>,
+    ) -> Poll<AfterReadingAuth<S, T, C, MC>, Error> {
         let message = try_ready!(state.stream.poll().map_err(Error::io));
         let state = state.take();
 
@@ -144,6 +158,7 @@ where
                 parameters: HashMap::new(),
                 config: state.config,
                 idx: state.idx,
+                make_ch: state.make_ch,
             }),
             Some(Message::AuthenticationCleartextPassword) => {
                 let pass = state
@@ -158,6 +173,7 @@ where
                     future: state.stream.send(buf),
                     config: state.config,
                     idx: state.idx,
+                    make_ch: state.make_ch,
                 })
             }
             Some(Message::AuthenticationMd5Password(body)) => {
@@ -180,6 +196,7 @@ where
                     future: state.stream.send(buf),
                     config: state.config,
                     idx: state.idx,
+                    make_ch: state.make_ch,
                 })
             }
             Some(Message::AuthenticationSasl(body)) => {
@@ -238,6 +255,7 @@ where
                     scram,
                     config: state.config,
                     idx: state.idx,
+                    make_ch: state.make_ch,
                 })
             }
             Some(Message::AuthenticationKerberosV5)
@@ -253,20 +271,21 @@ where
     }
 
     fn poll_sending_password<'a>(
-        state: &'a mut RentToOwn<'a, SendingPassword<S, T>>,
-    ) -> Poll<AfterSendingPassword<S, T>, Error> {
+        state: &'a mut RentToOwn<'a, SendingPassword<S, T, C, MC>>,
+    ) -> Poll<AfterSendingPassword<S, T, C, MC>, Error> {
         let stream = try_ready!(state.future.poll().map_err(Error::io));
         let state = state.take();
         transition!(ReadingAuthCompletion {
             stream,
             config: state.config,
             idx: state.idx,
+            make_ch: state.make_ch,
         })
     }
 
     fn poll_sending_sasl<'a>(
-        state: &'a mut RentToOwn<'a, SendingSasl<S, T>>,
-    ) -> Poll<AfterSendingSasl<S, T>, Error> {
+        state: &'a mut RentToOwn<'a, SendingSasl<S, T, C, MC>>,
+    ) -> Poll<AfterSendingSasl<S, T, C, MC>, Error> {
         let stream = try_ready!(state.future.poll().map_err(Error::io));
         let state = state.take();
         transition!(ReadingSasl {
@@ -274,12 +293,13 @@ where
             scram: state.scram,
             config: state.config,
             idx: state.idx,
+            make_ch: state.make_ch,
         })
     }
 
     fn poll_reading_sasl<'a>(
-        state: &'a mut RentToOwn<'a, ReadingSasl<S, T>>,
-    ) -> Poll<AfterReadingSasl<S, T>, Error> {
+        state: &'a mut RentToOwn<'a, ReadingSasl<S, T, C, MC>>,
+    ) -> Poll<AfterReadingSasl<S, T, C, MC>, Error> {
         let message = try_ready!(state.stream.poll().map_err(Error::io));
         let mut state = state.take();
 
@@ -296,6 +316,7 @@ where
                     scram: state.scram,
                     config: state.config,
                     idx: state.idx,
+                    make_ch: state.make_ch,
                 })
             }
             Some(Message::AuthenticationSaslFinal(body)) => {
@@ -307,6 +328,7 @@ where
                     stream: state.stream,
                     config: state.config,
                     idx: state.idx,
+                    make_ch: state.make_ch,
                 })
             }
             Some(Message::ErrorResponse(body)) => Err(Error::db(body)),
@@ -316,8 +338,8 @@ where
     }
 
     fn poll_reading_auth_completion<'a>(
-        state: &'a mut RentToOwn<'a, ReadingAuthCompletion<S, T>>,
-    ) -> Poll<AfterReadingAuthCompletion<S, T>, Error> {
+        state: &'a mut RentToOwn<'a, ReadingAuthCompletion<S, T, C, MC>>,
+    ) -> Poll<AfterReadingAuthCompletion<S, T, C, MC>, Error> {
         let message = try_ready!(state.stream.poll().map_err(Error::io));
         let state = state.take();
 
@@ -329,6 +351,7 @@ where
                 parameters: HashMap::new(),
                 config: state.config,
                 idx: state.idx,
+                make_ch: state.make_ch,
             }),
             Some(Message::ErrorResponse(body)) => Err(Error::db(body)),
             Some(_) => Err(Error::unexpected_message()),
@@ -337,8 +360,8 @@ where
     }
 
     fn poll_reading_info<'a>(
-        state: &'a mut RentToOwn<'a, ReadingInfo<S, T>>,
-    ) -> Poll<AfterReadingInfo<S, T>, Error> {
+        state: &'a mut RentToOwn<'a, ReadingInfo<S, T, C, MC>>,
+    ) -> Poll<AfterReadingInfo<S, T, C>, Error> {
         loop {
             let message = try_ready!(state.stream.poll().map_err(Error::io));
             match message {
@@ -354,7 +377,7 @@ where
                 }
                 Some(Message::ReadyForQuery(_)) => {
                     let state = state.take();
-                    let (sender, receiver) = mpsc::unbounded();
+                    let (sender, receiver) = (state.make_ch)().into_parts();
                     let client = Client::new(
                         sender,
                         state.process_id,
@@ -374,12 +397,14 @@ where
     }
 }
 
-impl<S, T> ConnectRawFuture<S, T>
+impl<S, T, C, MC> ConnectRawFuture<S, T, C, MC>
 where
     S: AsyncRead + AsyncWrite,
     T: TlsConnect<S>,
+    C: Channel<Request>,
+    MC: Fn() -> C + Clone,
 {
-    pub fn new(stream: S, tls: T, config: Config, idx: Option<usize>) -> ConnectRawFuture<S, T> {
-        ConnectRaw::start(TlsFuture::new(stream, config.0.ssl_mode, tls), config, idx)
+    pub fn new(stream: S, tls: T, config: Config, idx: Option<usize>, make_ch: MC) -> ConnectRawFuture<S, T, C, MC> {
+        ConnectRaw::start(TlsFuture::new(stream, config.0.ssl_mode, tls), config, idx, make_ch)
     }
 }

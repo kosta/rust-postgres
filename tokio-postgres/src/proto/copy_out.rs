@@ -6,11 +6,14 @@ use std::mem;
 
 use crate::proto::client::{Client, PendingRequest};
 use crate::proto::statement::Statement;
-use crate::Error;
+use crate::proto::Request;
+use crate::{Channel, Error};
 
-enum State {
+enum State<C>
+where C: Channel<Request>,
+{
     Start {
-        client: Client,
+        client: Client<C>,
         request: PendingRequest,
         statement: Statement,
     },
@@ -23,9 +26,12 @@ enum State {
     Done,
 }
 
-pub struct CopyOutStream(State);
+pub struct CopyOutStream<C>(State<C>) where C: Channel<Request>,;
 
-impl Stream for CopyOutStream {
+impl<C> Stream for CopyOutStream<C>
+where
+    C: Channel<Request>,
+{
     type Item = Bytes;
     type Error = Error;
 
@@ -94,8 +100,10 @@ impl Stream for CopyOutStream {
     }
 }
 
-impl CopyOutStream {
-    pub fn new(client: Client, request: PendingRequest, statement: Statement) -> CopyOutStream {
+impl<C> CopyOutStream<C>
+where C: Channel<Request>,
+{
+    pub fn new(client: Client<C>, request: PendingRequest, statement: Statement) -> CopyOutStream<C> {
         CopyOutStream(State::Start {
             client,
             request,
