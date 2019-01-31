@@ -181,8 +181,13 @@ impl Client {
         ExecuteFuture::new(self.clone(), pending, statement.clone())
     }
 
-    pub fn execute_sink<T, F>(&self, statement: &Statement, to_sql: F) -> crate::proto::execute_sink::ExecuteSink<T, F>
-    where F: Fn(&T) -> Vec<&dyn ToSql>,
+    pub fn execute_sink<T, F>(
+        &self,
+        statement: &Statement,
+        to_sql: F,
+    ) -> crate::proto::execute_sink::ExecuteSink<T, F>
+    where
+        F: Fn(&T) -> Vec<&dyn ToSql>,
     {
         crate::proto::execute_sink::ExecuteSink {
             statement: statement.clone(),

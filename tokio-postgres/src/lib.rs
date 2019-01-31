@@ -186,8 +186,13 @@ impl Client {
         Execute(self.0.execute(&statement.0, params))
     }
 
-    pub fn execute_sink<T, F>(&self, statement: &Statement, to_sql: F) -> crate::proto::ExecuteSink<T, F>
-    where F: Fn(&T) -> Vec<&dyn ToSql>,
+    pub fn execute_sink<T, F>(
+        &self,
+        statement: &Statement,
+        to_sql: F,
+    ) -> crate::proto::ExecuteSink<T, F>
+    where
+        F: Fn(&T) -> Vec<&dyn ToSql>,
     {
         self.0.execute_sink(&statement.0, to_sql)
     }

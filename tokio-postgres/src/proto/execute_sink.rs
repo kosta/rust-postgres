@@ -2,12 +2,12 @@ use futures::sync::mpsc;
 use futures::{Poll, Sink, StartSend};
 use std::marker::PhantomData;
 
+use crate::proto::client::Client;
 use crate::proto::connection::{Request, RequestMessages};
+use crate::proto::idle::IdleState;
+use crate::proto::statement::Statement;
 use crate::types::ToSql;
 use crate::Error;
-use crate::proto::client::Client;
-use crate::proto::statement::Statement;
-use crate::proto::idle::IdleState;
 
 pub struct ExecuteSink<T, F>
 where
@@ -31,17 +31,27 @@ where
 
     fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
         let params = (self.to_sql)(&item);
-        let msg = self.client.excecute_message(&self.statement, params.as_ref())?;
+        let msg = self
+            .client
+            .excecute_message(&self.statement, params.as_ref())?;
 
-        self.sender.start_send(
-            Request{
+        self.sender
+            .start_send(Request {
                 messages: RequestMessages::Single(msg),
                 sender: None,
                 idle: Some(self.idle.guard()),
-            }).map(|ok| ok.map(|_| item)).map_err(|_| Error::closed())
+            })
+            .map(|ok| ok.map(|_| item))
+            .map_err(|e| {
+                eprintln!("ExecuteSink error: {:?}", e);
+                Error::closed()
+            })
     }
 
     fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
-        self.sender.poll_complete().map_err(|_| Error::closed())
+        self.sender.poll_complete().map_err(|e| {
+            eprintln!("ExecuteSink error: {:?}", e);
+            Error::closed()
+        })
     }
 }
