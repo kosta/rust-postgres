@@ -115,6 +115,7 @@ pub use crate::socket::Socket;
 pub use crate::stmt::Column;
 pub use crate::tls::*;
 use crate::types::{ToSql, Type};
+pub use crate::proto::ExecuteSink;
 
 mod config;
 pub mod error;
@@ -190,7 +191,7 @@ impl Client {
         &self,
         statement: &Statement,
         to_sql: F,
-    ) -> crate::proto::ExecuteSink<T, F>
+    ) -> ExecuteSink<T, F>
     where
         F: Fn(&T) -> Vec<&dyn ToSql>,
     {
