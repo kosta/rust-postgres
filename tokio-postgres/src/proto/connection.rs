@@ -143,6 +143,9 @@ where
                     if let Message::ErrorResponse(body) = message {
                         return Err(Error::db(body));
                     }
+                    if !request_complete {
+                        self.responses.push_front(response);
+                    }
                 }
                 Some(ref mut sender) => {
                     match sender.start_send(message) {
