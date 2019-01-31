@@ -331,7 +331,7 @@ impl Client {
         }
     }
 
-    fn excecute_message(
+    pub(crate) fn excecute_message(
         &self,
         statement: &Statement,
         params: &[&dyn ToSql],
