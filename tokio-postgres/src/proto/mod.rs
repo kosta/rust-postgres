@@ -35,6 +35,7 @@ mod connection;
 mod copy_in;
 mod copy_out;
 mod execute;
+mod execute_sink;
 mod idle;
 mod maybe_tls_stream;
 mod portal;

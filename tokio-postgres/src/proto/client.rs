@@ -8,6 +8,7 @@ use postgres_protocol::message::frontend;
 use std::collections::HashMap;
 use std::error::Error as StdError;
 use std::sync::{Arc, Weak};
+use std::io;
 use tokio_io::{AsyncRead, AsyncWrite};
 
 use crate::proto::bind::BindFuture;
@@ -49,7 +50,7 @@ struct State {
 struct Inner {
     state: Mutex<State>,
     idle: IdleState,
-    sender: mpsc::UnboundedSender<Request>,
+    sender: mpsc::Sender<Request>,
     process_id: i32,
     secret_key: i32,
     #[cfg_attr(not(feature = "runtime"), allow(dead_code))]
@@ -63,7 +64,7 @@ pub struct Client(Arc<Inner>);
 
 impl Client {
     pub fn new(
-        sender: mpsc::UnboundedSender<Request>,
+        sender: mpsc::Sender<Request>,
         process_id: i32,
         secret_key: i32,
         config: Config,
@@ -133,14 +134,21 @@ impl Client {
         let (messages, idle) = request.0?;
         let (sender, receiver) = mpsc::channel(1);
         self.0
-            .sender
-            .unbounded_send(Request {
+            .sender.clone()
+            .try_send(Request {
                 messages,
-                sender,
+                sender: Some(sender),
                 idle: Some(idle),
             })
             .map(|_| receiver)
-            .map_err(|_| Error::closed())
+            .map_err(|e| {
+                // TODO: Sorry for this bad hack!
+                if e.is_disconnected() {
+                    Error::closed()
+                } else {
+                    Error::io(io::Error::new(io::ErrorKind::WouldBlock, e))
+                }
+            })
     }
 
     pub fn batch_execute(&self, query: &str) -> SimpleQueryStream {
@@ -277,11 +285,11 @@ impl Client {
         frontend::close(ty, name, &mut buf).expect("statement name not valid");
         frontend::sync(&mut buf);
         let (sender, _) = mpsc::channel(0);
-        let _ = self.0.sender.unbounded_send(Request {
+        self.0.sender.clone().try_send(Request {
             messages: RequestMessages::Single(buf),
-            sender,
+            sender: Some(sender),
             idle: None,
-        });
+        }).expect("try_send to succeed (TODO: Bad hack)");
     }
 
     fn bind_message(

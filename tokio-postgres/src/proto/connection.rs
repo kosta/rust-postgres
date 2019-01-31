@@ -24,12 +24,12 @@ pub enum RequestMessages {
 
 pub struct Request {
     pub messages: RequestMessages,
-    pub sender: mpsc::Sender<Message>,
+    pub sender: Option<mpsc::Sender<Message>>,
     pub idle: Option<IdleGuard>,
 }
 
 struct Response {
-    sender: mpsc::Sender<Message>,
+    sender: Option<mpsc::Sender<Message>>,
     _idle: Option<IdleGuard>,
 }
 
@@ -43,7 +43,7 @@ enum State {
 pub struct Connection<S> {
     stream: Framed<S, PostgresCodec>,
     parameters: HashMap<String, String>,
-    receiver: mpsc::UnboundedReceiver<Request>,
+    receiver: mpsc::Receiver<Request>,
     pending_request: Option<RequestMessages>,
     pending_response: Option<Message>,
     responses: VecDeque<Response>,
@@ -57,7 +57,7 @@ where
     pub fn new(
         stream: Framed<S, PostgresCodec>,
         parameters: HashMap<String, String>,
-        receiver: mpsc::UnboundedReceiver<Request>,
+        receiver: mpsc::Receiver<Request>,
     ) -> Connection<S> {
         Connection {
             stream,
@@ -137,19 +137,29 @@ where
                 _ => false,
             };
 
-            match response.sender.start_send(message) {
-                // if the receiver's hung up we still need to page through the rest of the messages
-                // designated to it
-                Ok(AsyncSink::Ready) | Err(_) => {
-                    if !request_complete {
-                        self.responses.push_front(response);
+            match response.sender {
+                None => {
+                    // no response to send - ignore it unless it's an error
+                    if let Message::ErrorResponse(body) = message {
+                        return Err(Error::db(body));
                     }
-                }
-                Ok(AsyncSink::NotReady(message)) => {
-                    self.responses.push_front(response);
-                    self.pending_response = Some(message);
-                    trace!("poll_read: waiting on sender");
-                    return Ok(None);
+                },
+                Some(ref mut sender) => {
+                    match sender.start_send(message) {
+                        // if the receiver's hung up we still need to page through the rest of the messages
+                        // designated to it
+                        Ok(AsyncSink::Ready) | Err(_) => {
+                            if !request_complete {
+                                self.responses.push_front(response);
+                            }
+                        }
+                        Ok(AsyncSink::NotReady(message)) => {
+                            self.responses.push_front(response);
+                            self.pending_response = Some(message);
+                            trace!("poll_read: waiting on sender");
+                            return Ok(None);
+                        }
+                    }
                 }
             }
         }

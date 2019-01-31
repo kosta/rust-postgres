@@ -14,6 +14,8 @@ use tokio_io::{AsyncRead, AsyncWrite};
 use crate::proto::{Client, Connection, MaybeTlsStream, PostgresCodec, TlsFuture};
 use crate::{ChannelBinding, Config, Error, TlsConnect};
 
+pub const CHAN_SIZE: usize = 8192;
+
 #[derive(StateMachineFuture)]
 pub enum ConnectRaw<S, T>
 where
@@ -354,7 +356,7 @@ where
                 }
                 Some(Message::ReadyForQuery(_)) => {
                     let state = state.take();
-                    let (sender, receiver) = mpsc::unbounded();
+                    let (sender, receiver) = mpsc::channel(CHAN_SIZE);
                     let client = Client::new(
                         sender,
                         state.process_id,
