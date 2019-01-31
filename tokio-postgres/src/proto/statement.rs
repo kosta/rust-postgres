@@ -14,8 +14,8 @@ pub struct StatementInner {
 impl Drop for StatementInner {
     fn drop(&mut self) {
         if let Some(client) = self.client.upgrade() {
-            eprintln!("Closing statement (TODO: Uncomment!)");
-            // client.close_statement(&self.name);
+            eprintln!("Closing statement.");
+            client.close_statement(&self.name);
         }
     }
 }
