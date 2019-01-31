@@ -66,6 +66,7 @@ pub use crate::proto::connection::Connection;
 pub use crate::proto::copy_in::CopyInFuture;
 pub use crate::proto::copy_out::CopyOutStream;
 pub use crate::proto::execute::ExecuteFuture;
+pub use crate::proto::execute_sink::ExecuteSink;
 pub use crate::proto::maybe_tls_stream::MaybeTlsStream;
 pub use crate::proto::portal::Portal;
 pub use crate::proto::prepare::PrepareFuture;

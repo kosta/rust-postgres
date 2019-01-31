@@ -181,6 +181,19 @@ impl Client {
         ExecuteFuture::new(self.clone(), pending, statement.clone())
     }
 
+    pub fn execute_sink<T, F>(&self, statement: &Statement, to_sql: F) -> crate::proto::execute_sink::ExecuteSink<T, F>
+    where F: Fn(&T) -> Vec<&dyn ToSql>,
+    {
+        crate::proto::execute_sink::ExecuteSink {
+            statement: statement.clone(),
+            client: Client(self.0.clone()),
+            sender: self.0.sender.clone(),
+            to_sql,
+            idle: IdleState::new(),
+            phantom_data: std::marker::PhantomData,
+        }
+    }
+
     pub fn query(&self, statement: &Statement, params: &[&dyn ToSql]) -> QueryStream<Statement> {
         let pending = PendingRequest(
             self.excecute_message(statement, params)
