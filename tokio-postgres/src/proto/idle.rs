@@ -10,6 +10,7 @@ struct Inner {
     task: AtomicTask,
 }
 
+#[derive(Clone)]
 pub struct IdleState(Arc<Inner>);
 
 impl IdleState {

@@ -195,7 +195,7 @@ impl Client {
             client: Client(self.0.clone()),
             sender: self.0.sender.clone(),
             to_sql,
-            idle: IdleState::new(),
+            idle: self.0.idle.clone(),
             phantom_data: std::marker::PhantomData,
         }
     }
