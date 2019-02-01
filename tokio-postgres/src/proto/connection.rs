@@ -133,7 +133,10 @@ where
             };
 
             let request_complete = match message {
-                Message::ReadyForQuery(_) => true,
+                Message::ReadyForQuery(_) => {
+                    crate::OUT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    true
+                },
                 _ => false,
             };
 
@@ -177,6 +180,7 @@ where
         match try_ready_receive!(self.receiver.poll()) {
             Some(request) => {
                 trace!("polled new request");
+                crate::IN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 self.responses.push_back(Response {
                     sender: request.sender,
                     _idle: request.idle,

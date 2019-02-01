@@ -138,6 +138,9 @@ fn next_portal() -> String {
     format!("p{}", ID.fetch_add(1, Ordering::SeqCst))
 }
 
+pub static IN: AtomicUsize = AtomicUsize::new(0);
+pub static OUT: AtomicUsize = AtomicUsize::new(0);
+
 /// A convenience function which parses a connection string and connects to the database.
 ///
 /// See the documentation for [`Config`] for details on the connection string format.
