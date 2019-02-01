@@ -41,7 +41,12 @@ where
                 sender: None,
                 idle: Some(self.idle.guard()),
             })
-            .map(|ok| ok.map(|_| item))
+            .map(|ok| {
+                if ok.is_ready() {
+                    crate::SUNK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                ok.map(|_| item)
+            })
             .map_err(|e| {
                 eprintln!("ExecuteSink.start_send error: {:?}", e);
                 Error::closed()

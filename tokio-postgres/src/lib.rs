@@ -140,6 +140,7 @@ fn next_portal() -> String {
 
 pub static IN: AtomicUsize = AtomicUsize::new(0);
 pub static OUT: AtomicUsize = AtomicUsize::new(0);
+pub static SUNK: AtomicUsize = AtomicUsize::new(0);
 
 /// A convenience function which parses a connection string and connects to the database.
 ///
