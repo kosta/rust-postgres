@@ -54,10 +54,11 @@ where
     }
 
     fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
-        eprintln!("ExecuteSink.poll_complete");
-        self.sender.poll_complete().map_err(|e| {
+        let poll = self.sender.poll_complete().map_err(|e| {
             eprintln!("ExecuteSink.poll_complete error: {:?}", e);
             Error::closed()
-        })
+        });
+        eprintln!("ExecuteSink.poll_complete: {:?}", poll);
+        poll
     }
 }

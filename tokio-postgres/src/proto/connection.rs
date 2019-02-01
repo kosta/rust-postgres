@@ -144,6 +144,7 @@ where
                 None => {
                     // no response to send - ignore it unless it's an error
                     if let Message::ErrorResponse(body) = message {
+                        eprintln!("Connection::poll_read(): Msg error");
                         return Err(Error::db(body));
                     }
                     if !request_complete {
@@ -202,6 +203,10 @@ where
                 Async::Ready(Some(request)) => request,
                 Async::Ready(None) if self.responses.is_empty() && self.state == State::Active => {
                     trace!("poll_write: at eof, terminating");
+                    eprintln!("Connection: poll_write: at eof at {} in / {} out",
+                        crate::IN.load(std::sync::atomic::Ordering::Relaxed),
+                        crate::OUT.load(std::sync::atomic::Ordering::Relaxed),
+                    );
                     self.state = State::Terminating;
                     let mut request = vec![];
                     frontend::terminate(&mut request);
