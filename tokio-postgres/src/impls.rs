@@ -5,7 +5,7 @@ use std::error;
 use tokio_io::{AsyncRead, AsyncWrite};
 
 use crate::proto;
-use crate::{Client, Connection, Error, Portal, Row, Statement, TlsConnect};
+use crate::{Client, Connection, Error, Portal, Row, SimpleQueryMessage, Statement, TlsConnect};
 #[cfg(feature = "runtime")]
 use crate::{MakeTlsConnect, Socket};
 
@@ -121,6 +121,19 @@ impl Stream for Query {
     }
 }
 
+/// The future returned by `Client::execute`.
+#[must_use = "futures do nothing unless polled"]
+pub struct Execute(pub(crate) proto::ExecuteFuture);
+
+impl Future for Execute {
+    type Item = u64;
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<u64, Error> {
+        self.0.poll()
+    }
+}
+
 /// The future returned by `Client::bind`.
 #[must_use = "futures do nothing unless polled"]
 pub struct Bind(pub(crate) proto::BindFuture);
@@ -184,6 +197,19 @@ impl Stream for CopyOut {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Option<Bytes>, Error> {
+        self.0.poll()
+    }
+}
+
+/// The stream returned by `Client::simple_query`.
+#[must_use = "streams do nothing unless polled"]
+pub struct SimpleQuery(pub(crate) proto::SimpleQueryStream);
+
+impl Stream for SimpleQuery {
+    type Item = SimpleQueryMessage;
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Option<SimpleQueryMessage>, Error> {
         self.0.poll()
     }
 }
