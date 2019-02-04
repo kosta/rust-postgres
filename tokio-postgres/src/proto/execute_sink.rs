@@ -41,12 +41,7 @@ where
                 sender: None,
                 idle: Some(self.idle.guard()),
             })
-            .map(|ok| {
-                if ok.is_ready() {
-                    crate::SUNK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                }
-                ok.map(|_| item)
-            })
+            .map(|ok| ok.map(|_| item))
             .map_err(|e| {
                 eprintln!("ExecuteSink.start_send error: {:?}", e);
                 Error::closed()
@@ -54,11 +49,9 @@ where
     }
 
     fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
-        let poll = self.sender.poll_complete().map_err(|e| {
+        self.sender.poll_complete().map_err(|e| {
             eprintln!("ExecuteSink.poll_complete error: {:?}", e);
             Error::closed()
-        });
-        eprintln!("ExecuteSink.poll_complete: {:?}", poll);
-        poll
+        })
     }
 }
